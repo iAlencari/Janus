@@ -1039,6 +1039,18 @@
     ["No AMD Software, abra \"Jogos\", escolha o jogo e ajuste o perfil gráfico recomendado pela AMD.","In AMD Software, open \"Gaming\", pick the game and set the graphics profile recommended by AMD.","在 AMD Software 中打开“游戏”，选择游戏并设置 AMD 推荐的图形配置文件。","En AMD Software, abre \"Juegos\", elige el juego y ajusta el perfil gráfico recomendado por AMD."],
     ["Abrir o {0}","Open {0}","打开 {0}","Abrir {0}"],
     ["Jogos: atalho para o NVIDIA App (ou AMD Software), que aplica a configuração recomendada pela fabricante. A IA fica atrás do botão \"Ativar configurações por IA\".","Gaming: shortcut to the NVIDIA App (or AMD Software), which applies the manufacturer\u0027s recommended settings. AI is behind the \"Turn on AI settings\" button.","游戏：NVIDIA App（或 AMD Software）快捷入口，可应用厂商推荐设置。AI 功能位于“开启 AI 设置”按钮之后。","Juegos: acceso a NVIDIA App (o AMD Software), que aplica la configuración recomendada por el fabricante. La IA queda detrás del botón \"Activar configuraciones por IA\"."],
-    ["Aba Rede e menu da engrenagem bem mais rápidos.","Network tab and gear menu are much faster.","“网络”页和齿轮菜单快多了。","La pestaña Red y el menú del engranaje son mucho más rápidos."]
+    ["Aba Rede e menu da engrenagem bem mais rápidos.","Network tab and gear menu are much faster.","“网络”页和齿轮菜单快多了。","La pestaña Red y el menú del engranaje son mucho más rápidos."],
+    ["Abrir no {0}","Open in {0}","在 {0} 中打开","Abrir en {0}"],
+    ["Abre o site com o pedido escrito e deixa o arquivo selecionado no Explorer (e copiado) para você arrastar para o chat.","Opens the site with the request written and leaves the file selected in Explorer (and copied) for you to drag into the chat.","打开网站并写好请求，同时在资源管理器中选中该文件（并已复制），方便你拖进聊天。","Abre el sitio con el pedido escrito y deja el archivo seleccionado en el Explorador (y copiado) para que lo arrastres al chat."],
+    ["Escolher uma IA","Choose an AI","选择 AI","Elegir una IA"],
+    ["Escolha uma IA (Claude, ChatGPT, Gemini, Grok ou DeepSeek) para o Janus abrir com o pedido pronto.","Choose an AI (Claude, ChatGPT, Gemini, Grok or DeepSeek) for Janus to open with the request ready.","选择一个 AI（Claude、ChatGPT、Gemini、Grok 或 DeepSeek），Janus 会带着准备好的请求打开它。","Elige una IA (Claude, ChatGPT, Gemini, Grok o DeepSeek) para que Janus la abra con el pedido listo."],
+    ["Só mostrar o arquivo","Just show the file","只显示文件","Solo mostrar el archivo"],
+    ["Abre a pasta com o arquivo selecionado, para você ler ou mandar para quem quiser.","Opens the folder with the file selected, so you can read it or send it to anyone.","打开文件夹并选中该文件，方便你阅读或发送给任何人。","Abre la carpeta con el archivo seleccionado, para que lo leas o lo envíes a quien quieras."],
+    ["Perguntar ao {0} sobre isto","Ask {0} about this","就此询问 {0}","Preguntar a {0} sobre esto"],
+    ["Pedir ajuda sobre isto (gera um arquivo com tudo para uma IA)","Get help with this (builds a file with everything for an AI)","获取帮助（生成包含所有信息的文件供 AI 使用）","Pedir ayuda sobre esto (genera un archivo con todo para una IA)"],
+    ["Quer pedir ajuda a uma IA ou reportar o erro? Os dois montam um arquivo com tudo sobre o problema.","Want to ask an AI for help or report the error? Both build a file with everything about the problem.","想向 AI 求助还是报告错误？两者都会生成包含问题全部信息的文件。","¿Quieres pedir ayuda a una IA o reportar el error? Ambos arman un archivo con todo sobre el problema."],
+    ["Pedir ajuda à IA","Ask the AI for help","向 AI 求助","Pedir ayuda a la IA"],
+    ["O Windows recusou a correção:","Windows refused the fix:","Windows 拒绝了修复：","Windows rechazó la corrección:"],
+    ["Quer pedir ajuda a uma IA?","Want to ask an AI for help?","要向 AI 求助吗？","¿Quieres pedir ayuda a una IA?"]
   ]
 }

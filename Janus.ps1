@@ -1126,7 +1126,7 @@ function Apply-Tweak($t, [bool]$on, [switch]$Silent) {
         Write-Log ("ERRO ao mudar {0}: {1}" -f $t.Title, $msg)
         if (-not $Silent) {
             $W.Cursor = $null
-            $r = Show-Choice 'Não consegui aplicar' $t.Title ((T 'O Windows recusou a mudança:') + ' ' + $msg + "`n`n" + (T 'Quer pedir ajuda ao Claude ou reportar o erro? Os dois montam um arquivo com tudo sobre o problema.')) @(@('ask', 'Perguntar ao Claude', 'Accent'), @('report', 'Reportar erro', 'Ghost'), @('no', 'Agora não', 'Ghost')) 'crit'
+            $r = Show-Choice 'Não consegui aplicar' $t.Title ((T 'O Windows recusou a mudança:') + ' ' + $msg + "`n`n" + (T 'Quer pedir ajuda a uma IA ou reportar o erro? Os dois montam um arquivo com tudo sobre o problema.')) @(@('ask', 'Pedir ajuda à IA', 'Accent'), @('report', 'Reportar erro', 'Ghost'), @('no', 'Agora não', 'Ghost')) 'crit'
             if ($r -eq 'ask') { Ask-Claude 'Ajuste' $t $msg }
             if ($r -eq 'report') { Show-ReportDialog 'erro' ("Erro: $msg`r`nAjuste: " + $t.Id) | Out-Null }
         }
@@ -1291,7 +1291,7 @@ function New-CheckCard($c) {
             catch {
                 $msg = $_.Exception.Message
                 Write-Log ('ERRO ao corrigir ' + $ck.Title + ': ' + $msg)
-                $r = Show-Choice 'Não consegui corrigir' $ck.Title ('O Windows recusou a correção: ' + $msg + "`n`nQuer pedir ajuda ao Claude?") @(@('ask', 'Perguntar ao Claude', 'Accent'), @('no', 'Agora não', 'Ghost')) 'crit'
+                $r = Show-Choice 'Não consegui corrigir' $ck.Title ((T 'O Windows recusou a correção:') + ' ' + $msg + "`n`n" + (T 'Quer pedir ajuda a uma IA?')) @(@('ask', 'Pedir ajuda à IA', 'Accent'), @('no', 'Agora não', 'Ghost')) 'crit'
                 if ($r -eq 'ask') { Ask-Claude 'Verificacao' $ck $msg }
             }
             Show-Page $script:CurrentPage $ui.Scroll.VerticalOffset
@@ -1409,10 +1409,12 @@ function Show-AskDialog([string]$md, [string]$title) {
     $p = New-Text $md 11 '#5F6878'; $p.Margin = '0,0,0,16'; $sp.Children.Add($p) | Out-Null
     $ai = $script:Config.AiChoice
     $opts = @()
-    if ($cli) { $opts += , @('code', 'Abrir no Claude Code', 'Abre um terminal separado (sem poder de administrador) com o Claude Code, que lê o arquivo e investiga o problema. Ele pede permissão antes de mudar algo. O Claude Code exige plano pago do Claude.', $true, 'Accent') }
-    if ($ai -and $AiList.Contains($ai)) { $opts += , @('web', ((T 'Abrir no {0} do navegador') -f $AiList[$ai].Name), ((T 'Copia o texto do arquivo e abre o site. Lá, é só colar com Ctrl+V e enviar.') + ' ' + (Get-AiPrivacy $ai)), $true, $(if ($cli) { 'Ghost' } else { 'Accent' })) }
-    else { $opts += , @('setup', 'Integrar com uma IA', 'Escolha uma IA (Claude, ChatGPT, Gemini, Grok ou DeepSeek) para o Janus abrir com a pergunta pronta.', $true, 'Ghost') }
-    $opts += , @('file', 'Só abrir o arquivo', 'Abre o .md no Bloco de Notas para você ler ou mandar para quem quiser.', $true, 'Ghost')
+    # principal: a IA que a pessoa escolheu (site com o arquivo pronto para anexar)
+    if ($ai -and $AiList.Contains($ai)) { $opts += , @('web', ((T 'Abrir no {0}') -f $AiList[$ai].Name), ((T 'Abre o site com o pedido escrito e deixa o arquivo selecionado no Explorer (e copiado) para você arrastar para o chat.') + ' ' + (Get-AiPrivacy $ai)), $true, 'Accent') }
+    else { $opts += , @('setup', 'Escolher uma IA', 'Escolha uma IA (Claude, ChatGPT, Gemini, Grok ou DeepSeek) para o Janus abrir com o pedido pronto.', $true, 'Accent') }
+    # Claude Code só aparece com o Claude escolhido (e instalado no PC)
+    if ($cli -and $ai -eq 'claude') { $opts += , @('code', 'Abrir no Claude Code', 'Abre um terminal separado (sem poder de administrador) com o Claude Code, que lê o arquivo e investiga o problema. Ele pede permissão antes de mudar algo. O Claude Code exige plano pago do Claude.', $true, 'Ghost') }
+    $opts += , @('file', 'Só mostrar o arquivo', 'Abre a pasta com o arquivo selecionado, para você ler ou mandar para quem quiser.', $true, 'Ghost')
     foreach ($o in $opts) {
         $b = New-Object System.Windows.Controls.Button; $b.Style = $W.FindResource($o[4]); $b.HorizontalContentAlignment = 'Left'; $b.Margin = '0,0,0,8'; $b.Padding = '14,10'; $b.IsEnabled = $o[3]; $b.Tag = $o[0]
         $bs = New-Object System.Windows.Controls.StackPanel
@@ -1428,6 +1430,7 @@ function Show-AskDialog([string]$md, [string]$title) {
     if ($Teste) { $d.Close(); return 'cancel' }
     [void]$d.ShowDialog()
     $r = [string]$d.Tag
+    Write-Log ('Ajuda: opção escolhida = ' + $r)
     if ($r -eq 'setup') { if (Show-AiSetup) { $r = 'web' } else { $r = 'cancel' } }
     return $r
 }
@@ -1451,11 +1454,11 @@ function Ask-Claude([string]$kind, $item, [string]$err = '') {
                 Write-Log ('Claude Code aberto para: ' + $title)
             }
             'web' {
-                if (-not $AiList.Contains([string]$script:Config.AiChoice)) { [System.Windows.Clipboard]::SetText([System.IO.File]::ReadAllText($md)); return }
-                Open-AiWithPrompt ([System.IO.File]::ReadAllText($md))
-                Write-Log ('Ajuda copiada para o navegador: ' + $title)
+                if (-not $AiList.Contains([string]$script:Config.AiChoice)) { return }
+                Open-AiWithFile $md $title
+                Write-Log ('Ajuda aberta no {0}: {1}' -f $AiList[$script:Config.AiChoice].Name, $title)
             }
-            'file' { Start-Process notepad.exe $md }
+            'file' { Start-Process explorer.exe -ArgumentList ('/select,"{0}"' -f $md) }
         }
     } catch {
         Write-Log ('ERRO no Perguntar ao Claude: ' + $_.Exception.Message)
@@ -1465,7 +1468,8 @@ function Ask-Claude([string]$kind, $item, [string]$err = '') {
 function New-HelpButton([string]$kind, $item) {
     $b = New-Object System.Windows.Controls.Button
     $b.Style = $W.FindResource('Ghost'); $b.Width = 26; $b.Height = 26; $b.Padding = '0'
-    $b.Content = (New-Text '?' 13 '#AEB6C4' 'Bold'); $b.ToolTip = (T 'Perguntar ao Claude sobre isto')
+    $b.Content = (New-Text '?' 13 '#AEB6C4' 'Bold')
+    $b.ToolTip = $(if ($script:Config.AiChoice -and $AiList.Contains([string]$script:Config.AiChoice)) { (T 'Perguntar ao {0} sobre isto') -f $AiList[$script:Config.AiChoice].Name } else { T 'Pedir ajuda sobre isto (gera um arquivo com tudo para uma IA)' })
     $b.Tag = @{ Kind = $kind; Item = $item }
     $b.add_Click({ Ask-Claude $this.Tag.Kind $this.Tag.Item })
     return $b
@@ -4896,7 +4900,7 @@ if ($Teste) {
         Show-Welcome; Show-LanguageDialog; [void](Show-ReportDialog 'repetido' 'Erro: x'); [void](Show-Choice 'Descartar sugestão' 'x' 'Quer esconder esta sugestão só até fechar o Janus, ou para sempre? As descartadas para sempre podem ser trazidas de volta no fim desta aba.' @(@('forever', 'Para sempre', 'Danger'), @('session', 'Só até fechar o app', 'Ghost')) 'info')
         [void](Show-ChangePreview @($script:Tweaks | Where-Object { $_.Rec -eq $true }) $null 'Ajustes automáticos para este PC')
         # janelas que só abrem em ações: monta cada uma para a cobertura de tradução
-        [void](Show-CloseAsk); Show-NotifySettings; Show-Changelog
+        [void](Show-CloseAsk); Show-NotifySettings; Show-Changelog; [void](Show-AskDialog 'ajuda-teste.md' 'teste')
         [void](Confirm-FoStart @(@{ Name = 'ExitLag'; Why = 'Este programa pode controlar por onde a internet sai (VPN ou acelerador de jogo, como o Multi Internet do ExitLag).'; Procs = @('x.exe') }))
         if ($env:JANUS_FOTOS) {
             foreach ($pg in @($(if ($env:JANUS_PAGINAS) { $env:JANUS_PAGINAS -split ',' } else { 'Inicio', 'Manutencao', 'Sobre' }))) {

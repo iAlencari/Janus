@@ -239,7 +239,7 @@ function Load-Config {
     # padrões; qualquer valor salvo no config.json por cima (opções novas não precisam de código extra aqui)
     $c = @{ WarningSeen = $false; Dismissed = @(); LightMode = $false; Lang = ''; CrashCount = 0; AutoUpdate = $true; Anonimizar = $true
             LangChosen = $false; Theme = 'dark'; NavMode = 'simples'; OptSort = 'prio'; OptView = 'grade'; MonLevel = 'normal'
-            SpeedWarnOff = $false; DnsAuto = $true; SecOff = @(); DndUntil = ''; AiChoice = ''; AiAsked = $false; AiGoal = 'fps'; LogView = 'simples'; NotifyItems = @(); NotifyKinds = @('corner')
+            SpeedWarnOff = $false; DnsAuto = $true; SecOff = @(); DndUntil = ''; AiChoice = ''; AiAsked = $false; AiGoal = 'fps'; LogView = 'simples'; NotifyItems = @(); NotifyKinds = @('corner'); ManualGames = @(); FoOverride = @()
             NotifyRepeat = 'uma'; NotifyRearm = 30; NotifyEvery = 10; Tray = $false; CloseAsked = $false; LastVersion = '' }
     if ($Edition.Idioma) { $c.Lang = [string]$Edition.Idioma; $c.LangChosen = $true }   # idioma padrão da edição
     if (Test-Path -LiteralPath $ConfigFile) {
@@ -1387,10 +1387,8 @@ function Ask-Claude([string]$kind, $item, [string]$err = '') {
                 Write-Log ('Claude Code aberto para: ' + $title)
             }
             'web' {
-                [System.Windows.Clipboard]::SetText([System.IO.File]::ReadAllText($md))
-                if (-not $AiList.Contains([string]$script:Config.AiChoice)) { return }
-                Open-Url $AiList[$script:Config.AiChoice].Url
-                Show-Toast ((T 'Pergunta copiada. No {0}, cole com Ctrl+V e envie.') -f $AiList[$script:Config.AiChoice].Name)
+                if (-not $AiList.Contains([string]$script:Config.AiChoice)) { [System.Windows.Clipboard]::SetText([System.IO.File]::ReadAllText($md)); return }
+                Open-AiWithPrompt ([System.IO.File]::ReadAllText($md))
                 Write-Log ('Ajuda copiada para o navegador: ' + $title)
             }
             'file' { Start-Process notepad.exe $md }
@@ -3112,10 +3110,11 @@ function Invoke-SecReminder {
 # ---------- IAs e aba Jogos ----------
 # O Janus não tem ligação com nenhuma dessas empresas. Tudo vai pelo site de cada uma (ou pelo Claude Code, se instalado).
 $AiList = [ordered]@{
-    claude   = @{ Name = 'Claude';   Who = 'Anthropic (EUA)'; Url = 'https://claude.ai/new'; Extra = ''; Plan = 'Gratuito com limite de uso. O Claude Code (resposta dentro do Janus) exige plano pago.' }
-    chatgpt  = @{ Name = 'ChatGPT';  Who = 'OpenAI (EUA)'; Url = 'https://chatgpt.com/'; Extra = ''; Plan = 'Gratuito com limite de uso. Os modelos mais avançados pedem plano pago.' }
+    # Ask: endereço que já abre com a pergunta escrita ({0} = pergunta). Sem Ask, a pergunta vai copiada para colar.
+    claude   = @{ Name = 'Claude';   Who = 'Anthropic (EUA)'; Url = 'https://claude.ai/new'; Ask = 'https://claude.ai/new?q={0}'; Extra = ''; Plan = 'Gratuito com limite de uso. O Claude Code (resposta dentro do Janus) exige plano pago.' }
+    chatgpt  = @{ Name = 'ChatGPT';  Who = 'OpenAI (EUA)'; Url = 'https://chatgpt.com/'; Ask = 'https://chatgpt.com/?q={0}'; Extra = ''; Plan = 'Gratuito com limite de uso. Os modelos mais avançados pedem plano pago.' }
     gemini   = @{ Name = 'Gemini';   Who = 'Google (EUA)'; Url = 'https://gemini.google.com/app'; Extra = ''; Plan = 'Gratuito com conta Google. Recursos avançados pedem plano pago.' }
-    grok     = @{ Name = 'Grok';     Who = 'xAI (EUA)'; Url = 'https://grok.com/'; Extra = ''; Plan = 'Pede conta. Uso maior e modelos avançados pedem plano pago.' }
+    grok     = @{ Name = 'Grok';     Who = 'xAI (EUA)'; Url = 'https://grok.com/'; Ask = 'https://grok.com/?q={0}'; Extra = ''; Plan = 'Pede conta. Uso maior e modelos avançados pedem plano pago.' }
     deepseek = @{ Name = 'DeepSeek'; Who = 'DeepSeek (China)'; Url = 'https://chat.deepseek.com/'; Extra = 'Os dados ficam em servidores na China, e vários governos restringiram o uso desse serviço.'; Plan = 'Gratuito com conta.' }
 }
 function Get-AiPrivacy([string]$k) {
@@ -3177,6 +3176,7 @@ function Start-GameScan {
     [void](Start-BgJob 'jogos' $GamesCode @{} {
         param($res, $err)
         $script:Games = $(if ($res) { @($res.Games) } else { @() })
+        $script:Games = @($script:Games) + @(Get-ManualGames | Where-Object { $mn = $_.Name; -not @($script:Games | Where-Object { $_.Name -eq $mn }).Count })
         if ($script:GameScanManual) { $script:GameScanManual = $false; Show-Toast ((T '{0} jogo(s) encontrado(s)') -f $script:Games.Count); Write-Log ('Jogos procurados de novo: ' + $script:Games.Count) }
         if ($script:CurrentPage -eq 'Jogos' -and -not $script:Busy) { Show-Page 'Jogos' $ui.Scroll.VerticalOffset }
     })
@@ -3230,11 +3230,21 @@ $f = Join-Path $inp.Dir 'resposta.txt'
         })
         return
     }
-    $ai = $AiList[$script:Config.AiChoice]
-    [System.Windows.Clipboard]::SetText($prompt)
-    Open-Url $ai.Url
-    Write-Log ('Pergunta sobre {0} copiada para {1}' -f $g.Name, $ai.Name)
-    Show-Toast ((T 'Pergunta copiada. No {0}, cole com Ctrl+V e envie.') -f $ai.Name)
+    Open-AiWithPrompt $prompt
+    Write-Log ('Pergunta sobre {0} aberta no {1}' -f $g.Name, $AiList[$script:Config.AiChoice].Name)
+}
+# Abre a IA escolhida já com a pergunta escrita (quando o site aceita); sempre deixa copiada também, para colar se precisar
+function Open-AiWithPrompt([string]$prompt) {
+    $ai = $AiList[$script:Config.AiChoice]; if (-not $ai) { return }
+    try { [System.Windows.Clipboard]::SetText($prompt) } catch {}
+    $u = $(if ($ai.Ask) { $ai.Ask -f [uri]::EscapeDataString($prompt) } else { '' })
+    if ($u -and $u.Length -le 2000) {
+        Open-Url $u
+        Show-Toast ((T 'A pergunta já vai escrita no {0}: confira e envie. Se não aparecer, cole com Ctrl+V.') -f $ai.Name)
+    } else {
+        Open-Url $ai.Url
+        Show-Toast ((T 'Pergunta copiada. No {0}, cole com Ctrl+V e envie.') -f $ai.Name)
+    }
 }
 function Show-AiAnswer([string]$game, [string]$text) {
     $d = New-StyledWindow 'Resposta do Claude Code' 760; $d.SizeToContent = 'Manual'; $d.Height = 620; $d.ResizeMode = 'CanResize'
@@ -3270,6 +3280,28 @@ function Get-GameIcon([string]$p) {
         }
     } catch { $src = $null }
     $script:GameIconCache[$p] = $src; return $src
+}
+# jogos adicionados à mão (o .exe escolhido pela pessoa), guardados nas preferências
+function Get-ManualGames {
+    @($script:Config.ManualGames | Where-Object { $_ -and $_.Path } | ForEach-Object { @{ Name = [string]$_.Name; Source = (T 'adicionado manualmente'); Id = ''; Icon = [string]$_.Path; Manual = $true; Path = [string]$_.Path } })
+}
+function Add-ManualGame {
+    $dlg = New-Object Microsoft.Win32.OpenFileDialog; $dlg.Title = (T 'Escolha o arquivo .exe do jogo'); $dlg.Filter = ((T 'Programas') + ' (*.exe)|*.exe')
+    if ($dlg.ShowDialog() -ne $true) { return }
+    $p = $dlg.FileName
+    $vi = (Get-Item -LiteralPath $p).VersionInfo
+    $n = $(if ($vi.ProductName -and $vi.ProductName.Trim().Length -gt 1) { ($vi.ProductName -replace '[®™©]', '').Trim() } else { [IO.Path]::GetFileNameWithoutExtension($p) })
+    $list = @($script:Config.ManualGames | Where-Object { $_ })
+    if (@($list | Where-Object { $_.Path -eq $p }).Count) { Show-Toast 'Esse jogo já está na lista'; return }
+    $script:Config.ManualGames = @($list) + @(@{ Name = $n; Path = $p }); Save-Config
+    Write-Log ('Jogo adicionado à mão: ' + $n + ' (' + $p + ')')
+    if ($null -ne $script:Games) { $script:Games = @($script:Games) + @(Get-ManualGames | Where-Object { $_.Path -eq $p }) }
+    Show-Toast ((T '{0} adicionado') -f $n); Show-Page 'Jogos' $ui.Scroll.VerticalOffset
+}
+function Remove-ManualGame([string]$p) {
+    $script:Config.ManualGames = @($script:Config.ManualGames | Where-Object { $_ -and $_.Path -ne $p }); Save-Config
+    if ($null -ne $script:Games) { $script:Games = @($script:Games | Where-Object { -not ($_.Manual -and $_.Path -eq $p) }) }
+    Write-Log ('Jogo tirado da lista: ' + $p); Show-Page 'Jogos' $ui.Scroll.VerticalOffset
 }
 function Build-Jogos {
     $ai = $script:Config.AiChoice
@@ -3313,7 +3345,13 @@ function Build-Jogos {
     $hdr = New-Object System.Windows.Controls.Grid; Grid-Cols $hdr @('*', 'Auto'); $hdr.Margin = '0,4,12,0'
     Put $hdr (New-Section ((T 'JOGOS INSTALADOS ({0})') -f $script:Games.Count)) 0
     $rf = New-Button 'Procurar jogos' 'Accent'; $rf.Padding = '12,5'; $rf.FontSize = 12.5; $rf.ToolTip = (T 'Procura de novo os jogos instalados (Steam, Epic, Xbox, Riot, Battle.net, EA e Ubisoft). Use depois de instalar ou desinstalar um jogo.')
-    $rf.add_Click({ $script:Games = $null; $script:GameIconCache = @{}; $script:GameScanManual = $true; Show-Page 'Jogos' $ui.Scroll.VerticalOffset }); Put $hdr $rf 1
+    $rf.add_Click({ $script:Games = $null; $script:GameIconCache = @{}; $script:GameScanManual = $true; Show-Page 'Jogos' $ui.Scroll.VerticalOffset })
+    # embaixo do botão, sem destaque: adicionar um jogo que a busca não achou
+    $rcol = New-Object System.Windows.Controls.StackPanel; $rcol.HorizontalAlignment = 'Right'; $rcol.Children.Add($rf) | Out-Null
+    $man = New-Text 'Procurar manualmente' 11.5 '#7F8899'; $man.HorizontalAlignment = 'Right'; $man.Margin = '0,5,2,0'; $man.Cursor = 'Hand'; $man.TextDecorations = [System.Windows.TextDecorations]::Underline
+    $man.ToolTip = (T 'Escolha o arquivo .exe de um jogo que não apareceu na lista.')
+    $man.add_MouseLeftButtonUp({ Add-ManualGame }); $rcol.Children.Add($man) | Out-Null
+    Put $hdr $rcol 1
     Add-Body $hdr
     if (-not $script:Games.Count) { Add-Body (New-EmptyState ([string][char]0xE7FC) 'Nenhum jogo encontrado' 'Não achei jogos da Steam, Epic, Xbox, Riot, Battle.net, EA ou Ubisoft neste PC.'); return }
     $hasCode = [bool](Find-ClaudeCli)
@@ -3329,6 +3367,7 @@ function Build-Jogos {
         $sp.Children.Add((New-Text $g.Source 11.5 '#7F8899')) | Out-Null
         Put $gr $sp 1
         $bs = New-Object System.Windows.Controls.StackPanel; $bs.Orientation = 'Horizontal'; $bs.VerticalAlignment = 'Center'
+        if ($g.Manual) { $rm = New-Button 'Remover' 'Ghost' $g.Path; $rm.Padding = '10,5'; $rm.FontSize = 12; $rm.Margin = '0,0,8,0'; $rm.ToolTip = (T 'Tira da lista (não apaga o jogo).'); $rm.add_Click({ Remove-ManualGame $this.Tag }); $bs.Children.Add($rm) | Out-Null }
         $wk = New-LinkButton 'PCGamingWiki' ('https://www.pcgamingwiki.com/w/index.php?search=' + [uri]::EscapeDataString($g.Name)); $wk.Margin = '0,0,8,0'; $bs.Children.Add($wk) | Out-Null
         if ($ai -and $AiList.Contains($ai)) {
             if ($hasCode -and $ai -eq 'claude') { $bc = New-Button 'Responder aqui' 'Ghost' $g; $bc.Padding = '10,5'; $bc.FontSize = 12; $bc.Margin = '0,0,8,0'; $bc.ToolTip = (T 'Usa o Claude Code deste PC e mostra a resposta dentro do Janus. Exige plano pago do Claude.'); $bc.add_Click({ Ask-GameAi $this.Tag 'code' }); $bs.Children.Add($bc) | Out-Null }
@@ -3478,6 +3517,9 @@ $Changelog = [ordered]@{
         'Ícones dos jogos na aba Jogos, e o botão Procurar jogos para achar os que você instalar depois.',
         'O aviso discreto aparece no canto inferior esquerdo da tela, no monitor onde está o mouse.',
         'Antes de ligar o Failover, o Janus procura o que pode interferir (VPN, acelerador de jogo, outra cópia do Janus, prioridade fixada) e mostra o que é.',
+        'Opção de derrubar e desativar o que interfere no Failover (não recomendado), com o botão Reativar para voltar tudo como estava.',
+        'Perguntar à IA abre o site já com a pergunta escrita (Claude, ChatGPT e Grok).',
+        'Procurar manualmente: adicione à aba Jogos um jogo que a busca não achou.',
         'Esta janela de novidades.',
         'Saíram o botão Testes e o aviso de piscar o ícone.'
     )
@@ -3938,8 +3980,9 @@ function Get-NetInterference {
             $seen[$r.InterfaceIndex] = 1
             $ad = Get-NetAdapter -InterfaceIndex $r.InterfaceIndex -ErrorAction SilentlyContinue
             if ($ad -and $ad.Status -ne 'Up') { continue }
+            if ($ad -and ($ad.InterfaceDescription -match 'Hyper-V' -or $ad.Name -match 'vEthernet')) { continue }   # rede interna do Windows (WSL, máquinas virtuais)
             $nm = $(if ($ad) { '{0} ({1})' -f $ad.Name, $ad.InterfaceDescription } else { $r.InterfaceAlias })
-            [void]$out.Add(@{ Name = $nm; Why = 'A internet também passa por esta conexão virtual (VPN, túnel ou acelerador de jogo). Os dois tentam decidir por onde a internet sai.' })
+            [void]$out.Add(@{ Name = $nm; Why = 'A internet também passa por esta conexão virtual (VPN, túnel ou acelerador de jogo). Os dois tentam decidir por onde a internet sai.'; Adapter = $(if ($ad) { $ad.Name } else { '' }) })
         }
     } catch {}
     # 2) prioridade fixada à mão (sem ser pelo Janus agora)
@@ -3962,13 +4005,73 @@ function Get-NetInterference {
         }
     } catch {}
     # 4) programas conhecidos que mexem nas rotas, abertos agora
-    $procs = @(Get-Process -ErrorAction SilentlyContinue | ForEach-Object { $_.ProcessName })
+    # (guarda os arquivos e serviços de cada um, para o botão "derrubar e desativar" e para reativar depois)
+    $all = @(Get-Process -ErrorAction SilentlyContinue); $svcAll = $null
     foreach ($k in $FoKnownApps.Keys) {
-        if (@($procs | Where-Object { $_ -like "$k*" }).Count -and -not @($out | Where-Object { $_.Name -like ('*' + $FoKnownApps[$k] + '*') }).Count) {
-            [void]$out.Add(@{ Name = ($FoKnownApps[$k] + ' (' + (T 'aberto') + ')'); Why = 'Este programa pode controlar por onde a internet sai (VPN ou acelerador de jogo, como o Multi Internet do ExitLag).' })
-        }
+        $pp = @($all | Where-Object { $_.ProcessName -like "$k*" })
+        if (-not $pp.Count -or @($out | Where-Object { $_.Name -like ('*' + $FoKnownApps[$k] + '*') }).Count) { continue }
+        if ($null -eq $svcAll) { $svcAll = @(Get-CimInstance Win32_Service -ErrorAction SilentlyContinue) }
+        $paths = @($pp | ForEach-Object { try { $_.Path } catch { $null } } | Where-Object { $_ } | Select-Object -Unique)
+        $dirs = @($paths | ForEach-Object { Split-Path -Parent $_ } | Select-Object -Unique)
+        $svcs = @($svcAll | Where-Object { $sv = $_; $sv.Name -like "*$k*" -or $sv.DisplayName -like "*$k*" -or @($dirs | Where-Object { $sv.PathName -and $sv.PathName -like "*$_*" }).Count } | ForEach-Object { $_.Name } | Select-Object -Unique)
+        [void]$out.Add(@{ Name = ($FoKnownApps[$k] + ' (' + (T 'aberto') + ')'); Why = 'Este programa pode controlar por onde a internet sai (VPN ou acelerador de jogo, como o Multi Internet do ExitLag).'; Procs = $paths; Services = $svcs })
     }
     return , $out.ToArray()
+}
+# "Derrubar e desativar" (não recomendado): fecha os programas, para e desativa os serviços e desliga as conexões virtuais
+# que interferem. Tudo fica anotado em Config.FoOverride e no Registro de mudanças, para o botão Reativar desfazer.
+function Get-FoOverridePlan($found) {
+    $l = @()
+    foreach ($f in $found) {
+        foreach ($sn in @($f.Services | Where-Object { $_ })) { $l += ((T 'parar e desativar o serviço {0}') -f $sn) }
+        foreach ($pth in @($f.Procs | Where-Object { $_ })) { $l += ((T 'fechar {0}') -f [IO.Path]::GetFileName($pth)) }
+        if ($f.Adapter) { $l += ((T 'desativar a conexão virtual {0}') -f $f.Adapter) }
+    }
+    return , $l
+}
+function Invoke-FoOverride($found) {
+    $rec = New-Object System.Collections.ArrayList
+    foreach ($x in @($script:Config.FoOverride | Where-Object { $_ })) { [void]$rec.Add($x) }
+    foreach ($f in $found) {
+        foreach ($sn in @($f.Services | Where-Object { $_ })) {
+            $ws = Get-CimInstance Win32_Service -Filter ("Name='{0}'" -f ($sn -replace "'", "''")) -ErrorAction SilentlyContinue; if (-not $ws) { continue }
+            if (-not @($rec | Where-Object { $_.Kind -eq 'service' -and $_.Name -eq $sn }).Count) { [void]$rec.Add(@{ Kind = 'service'; Name = $sn; Label = [string]$ws.DisplayName; StartMode = [string]$ws.StartMode; Running = ($ws.State -eq 'Running') }) }
+            try { Stop-Service -Name $sn -Force -ErrorAction Stop } catch { Write-Log ('Override: não consegui parar o serviço {0}: {1}' -f $sn, $_.Exception.Message) }
+            try { Set-Service -Name $sn -StartupType Disabled -ErrorAction Stop } catch { Write-Log ('Override: não consegui desativar o serviço {0}: {1}' -f $sn, $_.Exception.Message) }
+            Write-Log ('Failover (override): serviço {0} parado e desativado (antes: {1}, {2})' -f $sn, $ws.StartMode, $ws.State)
+        }
+        foreach ($pth in @($f.Procs | Where-Object { $_ })) {
+            if (-not @($rec | Where-Object { $_.Kind -eq 'process' -and $_.Path -eq $pth }).Count) { [void]$rec.Add(@{ Kind = 'process'; Path = $pth; Label = [IO.Path]::GetFileName($pth) }) }
+            Get-Process -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -eq $pth } catch { $false } } | Stop-Process -Force -ErrorAction SilentlyContinue
+            Write-Log ('Failover (override): programa fechado: ' + $pth)
+        }
+        if ($f.Adapter) {
+            if (-not @($rec | Where-Object { $_.Kind -eq 'adapter' -and $_.Name -eq $f.Adapter }).Count) { [void]$rec.Add(@{ Kind = 'adapter'; Name = $f.Adapter; Label = $f.Adapter }) }
+            try { Disable-NetAdapter -Name $f.Adapter -Confirm:$false -ErrorAction Stop; Write-Log ('Failover (override): conexão virtual desativada: ' + $f.Adapter) } catch { Write-Log ('Override: não consegui desativar {0}: {1}' -f $f.Adapter, $_.Exception.Message) }
+        }
+    }
+    $script:Config.FoOverride = @($rec); Save-Config
+}
+function Restore-FoOverride {
+    $items = @($script:Config.FoOverride | Where-Object { $_ })
+    $fail = @()
+    # primeiro serviços e conexões, depois reabre os programas
+    foreach ($it in @($items | Where-Object { $_.Kind -ne 'process' }) + @($items | Where-Object { $_.Kind -eq 'process' })) {
+        try {
+            switch ([string]$it.Kind) {
+                'service' {
+                    $m = @{ Auto = 'Automatic'; Manual = 'Manual'; Disabled = 'Disabled' }[[string]$it.StartMode]; if (-not $m) { $m = 'Manual' }
+                    Set-Service -Name $it.Name -StartupType $m -ErrorAction Stop
+                    if ($it.Running) { Start-Service -Name $it.Name -ErrorAction Stop }
+                }
+                'adapter' { Enable-NetAdapter -Name $it.Name -Confirm:$false -ErrorAction Stop }
+                'process' { if (Test-Path -LiteralPath $it.Path) { Start-Unelevated $it.Path } }
+            }
+            Write-Log ('Failover: reativado ' + $it.Label)
+        } catch { $fail += [string]$it.Label; Write-Log ('Failover: não consegui reativar {0}: {1}' -f $it.Label, $_.Exception.Message) }
+    }
+    $script:Config.FoOverride = @(); Save-Config
+    if ($fail.Count) { Show-Toast ((T 'Reativado, menos: {0}') -f ($fail -join ', ')) } else { Show-Toast 'Tudo o que o Failover desligou foi reativado' }
 }
 function Start-Failover {
     $cfg = Get-FoCfg
@@ -4105,8 +4208,14 @@ function Add-FailoverSection {
             if ($found.Count) {
                 $lst = ($found | ForEach-Object { '• ' + $_.Name + "`n   " + (T $_.Why) }) -join "`n`n"
                 Write-Log ('Failover: interferências encontradas: ' + (($found | ForEach-Object { $_.Name }) -join '; '))
-                $r = Show-Choice 'Failover' 'Algo pode interferir no Failover' ((T 'Encontrei:') + "`n`n" + $lst + "`n`n" + (T 'Recomendado: feche ou desligue isso antes. Se ligar mesmo assim, as trocas de conexão podem ficar erradas ou ir e voltar.')) @(@('go', 'Ligar mesmo assim', 'Ghost'), @('no', 'Cancelar', 'Accent')) 'warn'
-                $ok = ($r -eq 'go')
+                $plan = @(Get-FoOverridePlan $found)
+                $btns = @(@('go', 'Ligar mesmo assim', 'Ghost'), @('no', 'Cancelar', 'Accent'))
+                if ($plan.Count) { $btns = @(, @('kill', 'Derrubar e desativar (não recomendado)', 'Danger')) + $btns }
+                $r = Show-Choice 'Failover' 'Algo pode interferir no Failover' ((T 'Encontrei:') + "`n`n" + $lst + "`n`n" + (T 'Recomendado: feche ou desligue isso antes. Se ligar mesmo assim, as trocas de conexão podem ficar erradas ou ir e voltar.')) $btns 'warn'
+                if ($r -eq 'kill') {
+                    $r2 = Show-Choice 'Failover' 'Derrubar e desativar?' ((T 'O Janus vai:') + "`n`n" + (($plan | ForEach-Object { '• ' + $_ }) -join "`n") + "`n`n" + (T 'Se houver uma partida em andamento, a conexão do jogo cai na hora. Os serviços ficam desativados até você reativar. Tudo fica anotado no Registro de mudanças, e o botão Reativar (em Internet e DNS) volta tudo como estava.')) @(@('yes', 'Derrubar e desativar', 'Danger'), @('no', 'Cancelar', 'Accent')) 'crit'
+                    $ok = ($r2 -eq 'yes'); if ($ok) { Invoke-FoOverride $found }
+                } else { $ok = ($r -eq 'go') }
             }
             if ($ok -and (Start-Failover)) { $c.On = $true } else { $this.IsChecked = $false; $c.On = $false }
         } else { Stop-Failover; $c.On = $false }
@@ -4119,6 +4228,16 @@ function Add-FailoverSection {
     $w1 = New-Text 'Cada troca derruba a conexão do jogo, que precisa reconectar. O Failover evita ficar sem internet, não evita a reconexão. Funciona só com o Janus aberto.' 12 '#F59E0B'; $w1.Margin = '0,6,0,0'; $sp.Children.Add($w1) | Out-Null
     if ((Get-PcInfo).HasExitLag) { $w2 = New-Text 'O ExitLag está instalado: não use o Failover junto com o Multi Internet dele, os dois tentam controlar as conexões.' 12 '#F59E0B'; $w2.Margin = '0,4,0,0'; $sp.Children.Add($w2) | Out-Null }
     if ($ads.Count -lt 2) { $w3 = New-Text 'Precisa de duas conexões ativas ao mesmo tempo (por exemplo, cabo e Wi-Fi).' 12 '#EF4444'; $w3.Margin = '0,4,0,0'; $sp.Children.Add($w3) | Out-Null }
+    # o que o "derrubar e desativar" desligou, com o botão para voltar
+    $ov = @($script:Config.FoOverride | Where-Object { $_ })
+    if ($ov.Count) {
+        $ob = New-Object System.Windows.Controls.Border; $ob.CornerRadius = 10; $ob.Margin = '0,10,0,0'; $ob.Padding = '14,10'; $ob.BorderThickness = 1; $ob.BorderBrush = Brush '#7F1D1D'
+        $ob.Background = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromArgb(36, 0xEF, 0x44, 0x44))
+        $og = New-Object System.Windows.Controls.Grid; Grid-Cols $og @('*', 'Auto')
+        $ot = New-Text ((T 'Desligado pelo Failover para evitar interferência: {0}.') -f (($ov | ForEach-Object { [string]$_.Label }) -join ', ')) 12.5 '#FCA5A5'; $ot.VerticalAlignment = 'Center'; $ot.Margin = '0,0,12,0'; Put $og $ot 0
+        $orb = New-Button 'Reativar' 'Ghost'; $orb.ToolTip = (T 'Volta os serviços, conexões e programas exatamente como estavam.'); $orb.add_Click({ Restore-FoOverride; Show-Page 'Rede' $ui.Scroll.VerticalOffset }); Put $og $orb 1
+        $ob.Child = $og; $sp.Children.Add($ob) | Out-Null
+    }
     # conexão preferida
     $r1 = New-Object System.Windows.Controls.WrapPanel; $r1.Margin = '0,12,0,0'
     $l1 = New-Text 'Conexão preferida:' 12.5 '#8B94A5' 'SemiBold'; $l1.VerticalAlignment = 'Center'; $l1.Margin = '0,0,10,0'; $r1.Children.Add($l1) | Out-Null
@@ -4561,6 +4680,8 @@ if ($Teste) {
     $gr = & ([scriptblock]::Create($GamesCode)) @{}
     Write-Output ("icones de jogos: {0} de {1} | sem: {2}" -f @($gr.Games | Where-Object { Get-GameIcon $_.Icon }).Count, @($gr.Games).Count, ((@($gr.Games | Where-Object { -not (Get-GameIcon $_.Icon) }) | ForEach-Object { $_.Name }) -join ', '))
     $sw2 = [Diagnostics.Stopwatch]::StartNew(); $fi = @(Get-NetInterference); Write-Output ("interferencias no failover ({0} ms): {1}" -f $sw2.ElapsedMilliseconds, $(if ($fi.Count) { ($fi | ForEach-Object { $_.Name }) -join ' | ' } else { 'nenhuma' }))
+    Write-Output ("override faria: " + ((Get-FoOverridePlan $fi) -join ' | '))
+    $gp = New-GamePrompt @{ Name = 'Overwatch'; Source = 'Battle.net' }; Write-Output ("tamanho do link da IA: {0} (limite 2000)" -f ($AiList.claude.Ask -f [uri]::EscapeDataString($gp)).Length)
     Write-Output ("rede: icones={0} | ordem: {1}" -f (Get-NetGlyphs).Length, ((Get-NetAdapters | ForEach-Object { $_.Name }) -join ' > '))
     Write-Output ("iniciar com o Windows: {0} | fechar: {1} | novidades: ok" -f (Test-Autostart), (Show-CloseAsk)); Show-Changelog '0.1.0-beta.2'
     $script:Mon = @{ Ram = 97; CpuTemp = $null; Gpu = @{ Temp = 92; Use = 50 }; Ssd = @() }; $script:Config.NotifyItems = @('gputemp', 'ram'); $script:Config.NotifyRepeat = 'uma'

@@ -63,6 +63,12 @@ $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     if ($Teste) { Write-Output 'AVISO: teste sem administrador; leituras de sistema podem falhar.' }
     else {
+        # opção "abrir sem a tela de administrador": uma tarefa agendada (criada com permissão) abre o Janus já como administrador
+        if (-not $SoRelatorio) {
+            $tn = '\Janus\Abrir o Janus'
+            $tx = & schtasks.exe /query /tn $tn /xml 2>$null
+            if ($LASTEXITCODE -eq 0 -and (($tx -join '') -like ('*' + $PSCommandPath + '*'))) { $null = & schtasks.exe /run /tn $tn 2>$null; if ($LASTEXITCODE -eq 0) { exit } }
+        }
         $fwd = @('-NoProfile','-ExecutionPolicy','Bypass','-STA','-WindowStyle','Hidden','-File',"`"$PSCommandPath`"")
         if ($SoRelatorio) { $fwd += '-SoRelatorio' }
         Start-Process powershell.exe -Verb RunAs -ArgumentList $fwd
@@ -3182,27 +3188,65 @@ function Start-GameScan {
     })
 }
 $GoalNames = [ordered]@{ fps = 'Máximo de FPS (competitivo)'; equil = 'Equilíbrio entre FPS e imagem'; qual = 'Melhor imagem possível' }
+# Ficha do jogo em Markdown: dados do PC + pedido de três configurações (equilibrada, qualidade, desempenho máximo)
 function New-GamePrompt($g) {
-    $pc = Get-PcInfo
-    $lang = @{ pt = 'português do Brasil'; en = 'English'; zh = 'Simplified Chinese'; es = 'español' }[$script:Lang]
-    $goal = @{ fps = 'maximum FPS and lowest input latency (competitive)'; equil = 'a balance between FPS and image quality'; qual = 'the best image quality while staying smooth' }[$script:Config.AiGoal]
+    # o "|" dos dados do PC quebraria a tabela do Markdown
+    $pc0 = Get-PcInfo; $pc = @{}; foreach ($k in 'Cpu', 'Gpu', 'Ram', 'Tela', 'Monitor', 'Disco', 'Windows', 'Energia', 'Tipo') { $pc[$k] = ([string]$pc0[$k]) -replace '\s*\|\s*', ', ' }
+    $hz = [regex]::Match([string]$pc.Tela, '(\d+) Hz').Groups[1].Value; if (-not $hz) { $hz = '60' }
     if ($script:Lang -eq 'pt') {
-        $obj = @{ fps = 'o máximo de FPS e o menor atraso possível (competitivo)'; equil = 'equilíbrio entre FPS e qualidade de imagem'; qual = 'a melhor imagem possível sem perder a fluidez' }[$script:Config.AiGoal]
         return (@(
-            "Jogo $($g.Name) no PC ($($g.Source)). Responda em português do Brasil.",
-            "Meu hardware: processador $($pc.Cpu); placa de vídeo $($pc.Gpu); memória $($pc.Ram); tela $($pc.Tela), monitor $($pc.Monitor); $($pc.Windows).",
-            "Objetivo: $obj.",
-            'Quero: 1) a configuração gráfica ideal dentro do jogo, em tabela (opção, valor, por quê); 2) ajustes no painel da placa de vídeo só se fizerem diferença real nesse jogo; 3) onde fica o arquivo de configuração do jogo; 4) o que NÃO devo mexer por causa do anticheat ou risco de banimento.',
-            'Cite só opções que existem de verdade nesse jogo. Se não tiver certeza de algo, diga isso em vez de inventar.'
+            "# Configuração de jogo: $($g.Name)", '',
+            "Jogo **$($g.Name)** no PC (loja: $($g.Source)). Responda em português do Brasil.", '',
+            '## O PC', '', '| Item | Valor |', '|---|---|',
+            "| Processador | $($pc.Cpu) |", "| Placa de vídeo | $($pc.Gpu) |", "| Memória | $($pc.Ram) |", "| Tela | $($pc.Tela) |", "| Monitor | $($pc.Monitor) |",
+            "| Disco do Windows | $($pc.Disco) |", "| Windows | $($pc.Windows) |", "| Plano de energia | $($pc.Energia) |", "| Tipo | $($pc.Tipo) |", '',
+            '## O que eu quero', '',
+            '1. Três configurações gráficas dentro do jogo, numa tabela só com as colunas: **Opção | Equilibrada | Qualidade | Desempenho máximo | Por quê**.',
+            "   - **Equilibrada:** boa imagem com FPS estável perto da taxa do monitor ($hz Hz).",
+            '   - **Qualidade:** a melhor imagem mantendo pelo menos 60 FPS estáveis.',
+            '   - **Desempenho máximo:** o máximo de FPS e o menor atraso possível (competitivo).',
+            '2. O FPS médio esperado em cada uma, neste hardware (estimativa).',
+            '3. Ajustes no painel da placa de vídeo, só se fizerem diferença real neste jogo.',
+            '4. Onde fica o arquivo de configuração do jogo.',
+            '5. O que **não** devo mexer por causa do anticheat ou risco de banimento.', '',
+            'Cite só opções que existem de verdade neste jogo. Se não tiver certeza de algo, diga isso em vez de inventar.'
         ) -join "`n")
     }
+    $lang = @{ en = 'English'; zh = 'Simplified Chinese'; es = 'Spanish' }[$script:Lang]; if (-not $lang) { $lang = 'English' }
     @(
-        "I play $($g.Name) on PC ($($g.Source)). Please answer in $lang.",
-        "My hardware: CPU $($pc.Cpu); GPU $($pc.Gpu); RAM $($pc.Ram); display $($pc.Tela), monitor $($pc.Monitor); $($pc.Windows).",
-        "Goal: $goal.",
-        'Give me: 1) the ideal in-game graphics settings as a table (setting, value, why); 2) GPU control panel settings for this game only if they really matter; 3) where the game''s config file is; 4) anything I must NOT change because of anti-cheat or bans.',
+        "# Game settings: $($g.Name)", '',
+        "Game **$($g.Name)** on PC (store: $($g.Source)). Please answer in $lang.", '',
+        '## The PC', '', '| Item | Value |', '|---|---|',
+        "| CPU | $($pc.Cpu) |", "| GPU | $($pc.Gpu) |", "| RAM | $($pc.Ram) |", "| Display | $($pc.Tela) |", "| Monitor | $($pc.Monitor) |",
+        "| Windows drive | $($pc.Disco) |", "| Windows | $($pc.Windows) |", "| Power plan | $($pc.Energia) |", "| Type | $($pc.Tipo) |", '',
+        '## What I want', '',
+        '1. Three in-game graphics presets in one table with the columns: **Setting | Balanced | Quality | Maximum performance | Why**.',
+        "   - **Balanced:** good image with stable FPS close to the monitor refresh rate ($hz Hz).",
+        '   - **Quality:** the best image while keeping at least a stable 60 FPS.',
+        '   - **Maximum performance:** the highest FPS and lowest input latency (competitive).',
+        '2. The expected average FPS for each one on this hardware (estimate).',
+        '3. GPU control panel settings, only if they really matter for this game.',
+        '4. Where the game''s config file is.',
+        '5. Anything I must **not** change because of anti-cheat or ban risk.', '',
         'Only list settings that really exist in this game. If you are not sure about something, say so instead of guessing.'
     ) -join "`n"
+}
+# grava a ficha como .md (para anexar no chat da IA) e devolve o caminho
+function Save-GameBrief($g) {
+    $dir = Join-Path $HelpDir 'jogos'; New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $safe = ($g.Name -replace '[\\/:*?"<>|]', '').Trim(); if (-not $safe) { $safe = 'jogo' }
+    $p = Join-Path $dir ("Janus - $safe.md")
+    [IO.File]::WriteAllText($p, (New-GamePrompt $g), (New-Object Text.UTF8Encoding($false)))
+    return $p
+}
+# abre a IA com uma frase curta já escrita e deixa o .md pronto para anexar (selecionado no Explorer e copiado)
+function Open-AiWithFile([string]$path, [string]$what) {
+    $ai = $AiList[$script:Config.AiChoice]; if (-not $ai) { return }
+    $short = (T 'Anexei o arquivo "{0}" com os dados do meu PC e o pedido sobre {1}. Leia o arquivo e responda exatamente ao que ele pede.') -f [IO.Path]::GetFileName($path), $what
+    try { $fl = New-Object System.Collections.Specialized.StringCollection; [void]$fl.Add($path); [System.Windows.Clipboard]::SetFileDropList($fl) } catch {}
+    Open-Url $(if ($ai.Ask) { $ai.Ask -f [uri]::EscapeDataString($short) } else { $ai.Url })
+    try { Start-Process explorer.exe -ArgumentList ('/select,"{0}"' -f $path) } catch {}
+    Show-Toast ((T 'No {0}: arraste para o chat o arquivo que abriu no Explorer (ou cole com Ctrl+V) e envie.') -f $ai.Name)
 }
 function Ask-GameAi($g, [string]$mode) {
     $prompt = New-GamePrompt $g
@@ -3230,8 +3274,9 @@ $f = Join-Path $inp.Dir 'resposta.txt'
         })
         return
     }
-    Open-AiWithPrompt $prompt
-    Write-Log ('Pergunta sobre {0} aberta no {1}' -f $g.Name, $AiList[$script:Config.AiChoice].Name)
+    $md = Save-GameBrief $g
+    Open-AiWithFile $md $g.Name
+    Write-Log ('Ficha do jogo {0} pronta para o {1}: {2}' -f $g.Name, $AiList[$script:Config.AiChoice].Name, $md)
 }
 # Abre a IA escolhida já com a pergunta escrita (quando o site aceita); sempre deixa copiada também, para colar se precisar
 function Open-AiWithPrompt([string]$prompt) {
@@ -3323,12 +3368,7 @@ function Build-Jogos {
         $cur = New-Text ($AiList[$ai].Name + '  (' + (T $AiList[$ai].Who) + ')') 13 '#E6E9EF' 'SemiBold'; $cur.VerticalAlignment = 'Center'; $cur.Margin = '0,0,12,0'; $r1.Children.Add($cur) | Out-Null
         $sb = New-Button 'Selecionar modelo' 'Ghost'; $sb.Padding = '10,4'; $sb.FontSize = 12; $sb.add_Click({ if (Show-AiSetup) { Show-Page 'Jogos' $ui.Scroll.VerticalOffset } }); $r1.Children.Add($sb) | Out-Null
         $bx.Children.Add($r1) | Out-Null
-        $r2 = New-Object System.Windows.Controls.WrapPanel; $r2.Margin = '0,10,0,0'
-        $l2 = New-Text 'Objetivo:' 12.5 '#8B94A5' 'SemiBold'; $l2.VerticalAlignment = 'Center'; $l2.Margin = '0,0,8,0'; $r2.Children.Add($l2) | Out-Null
-        foreach ($k in $GoalNames.Keys) {
-            $b = New-Object System.Windows.Controls.Button; $b.Style = $W.FindResource($(if ($script:Config.AiGoal -eq $k) { 'Accent' } else { 'Ghost' })); $b.Content = (T $GoalNames[$k]); $b.Tag = $k; $b.Padding = '10,4'; $b.Margin = '0,0,6,6'; $b.FontSize = 12
-            $b.add_Click({ $script:Config.AiGoal = $this.Tag; Save-Config; Show-Page 'Jogos' $ui.Scroll.VerticalOffset }); $r2.Children.Add($b) | Out-Null
-        }
+        $r2 = New-Text 'A resposta vem com três configurações lado a lado: equilibrada, qualidade e desempenho máximo. O Janus monta um arquivo com os dados do PC para você anexar no chat.' 12.5 '#AEB6C4'; $r2.Margin = '0,10,0,0'
         $bx.Children.Add($r2) | Out-Null
         # ressalvas (aparecem depois que o modelo foi escolhido)
         $wn = New-Text 'IAs não são 100% confiáveis: confira antes de aplicar e faça backup do arquivo de configuração do jogo.' 12 '#FCD38D' 'SemiBold'; $wn.Margin = '0,8,0,0'; $bx.Children.Add($wn) | Out-Null
@@ -3490,6 +3530,7 @@ function Show-GearMenu($anchor) {
     [void]$cm.Items.Add((New-MI 'Notificações...' { Show-NotifySettings }))
     [void]$cm.Items.Add((New-MI 'Ficar nos ícones ocultos ao fechar' { $script:Config.Tray = -not [bool]$script:Config.Tray; Save-Config; Write-Log ('Ícones ocultos ao fechar: ' + $script:Config.Tray) } ([bool]$script:Config.Tray)))
     [void]$cm.Items.Add((New-MI 'Iniciar com o Windows' { Set-Autostart (-not (Test-Autostart)) } (Test-Autostart)))
+    [void]$cm.Items.Add((New-MI 'Abrir sem a tela de administrador' { Set-NoUac (-not (Test-NoUac)) } (Test-NoUac)))
     if (@($script:Config.Dismissed).Count -or $script:DismissedSession.Count) { [void]$cm.Items.Add((New-MI 'Mostrar sugestões descartadas' { $script:Config.Dismissed = @(); Save-Config; $script:DismissedSession.Clear(); Write-Log 'Sugestões descartadas trazidas de volta.'; Build-Nav; Update-NavCounts; Show-Toast 'Sugestões descartadas voltaram' })) }
     [void]$cm.Items.Add((New-MI 'Procurar atualizações sozinho' { $script:Config.AutoUpdate = -not $script:Config.AutoUpdate; Save-Config; Write-Log ('Procurar atualizações sozinho: ' + $script:Config.AutoUpdate) } ([bool]$script:Config.AutoUpdate)))
     [void]$cm.Items.Add((New-MSep))
@@ -3518,7 +3559,8 @@ $Changelog = [ordered]@{
         'O aviso discreto aparece no canto inferior esquerdo da tela, no monitor onde está o mouse.',
         'Antes de ligar o Failover, o Janus procura o que pode interferir (VPN, acelerador de jogo, outra cópia do Janus, prioridade fixada) e mostra o que é.',
         'Opção de derrubar e desativar o que interfere no Failover (não recomendado), com o botão Reativar para voltar tudo como estava.',
-        'Perguntar à IA abre o site já com a pergunta escrita (Claude, ChatGPT e Grok).',
+        'Perguntar à IA monta um arquivo com os dados do PC para anexar no chat, e a resposta vem com três configurações: equilibrada, qualidade e desempenho máximo.',
+        'Opção na engrenagem: abrir o Janus sem a tela de permissão do Windows.',
         'Procurar manualmente: adicione à aba Jogos um jogo que a busca não achou.',
         'Esta janela de novidades.',
         'Saíram o botão Testes e o aviso de piscar o ícone.'
@@ -3607,6 +3649,27 @@ function Show-CloseAsk {
 
 # ---------- iniciar com o Windows ----------
 # tarefa agendada no logon com privilégio máximo: abre sem a pergunta do UAC, direto nos ícones ocultos
+# ---------- abrir sem a tela de administrador do Windows ----------
+# Tarefa agendada sem gatilho, com privilégio máximo: o atalho normal a chama e o Janus abre sem a pergunta do UAC.
+# Em troca, qualquer programa da conta também consegue abrir o Janus como administrador sem perguntar (por isso é opção).
+function Test-NoUac { return [bool](Get-ScheduledTask -TaskPath '\Janus\' -TaskName 'Abrir o Janus' -ErrorAction SilentlyContinue) }
+function Set-NoUac([bool]$on) {
+    try {
+        if ($on) {
+            $r = Show-Choice 'Abrir sem a tela de administrador' 'Abrir o Janus sem a pergunta do Windows?' 'O Janus passa a abrir direto, sem a tela azul de permissão. Em troca, qualquer programa aberto na sua conta também consegue abrir o Janus como administrador sem perguntar. Use só se você confia nos programas do seu PC. Dá para desligar quando quiser.' @(@('yes', 'Ativar', 'Danger'), @('no', 'Cancelar', 'Accent')) 'warn'
+            if ($r -ne 'yes') { return }
+            $me = "$env:USERDOMAIN\$env:USERNAME"
+            $act = New-ScheduledTaskAction -Execute (Join-Path $env:windir 'System32\WindowsPowerShell\v1.0\powershell.exe') -Argument ('-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "{0}"' -f $PSCommandPath) -WorkingDirectory $Pasta
+            $pr = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Highest
+            $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances Parallel
+            Register-ScheduledTask -TaskName 'Abrir o Janus' -TaskPath '\Janus\' -Action $act -Principal $pr -Settings $set -Force | Out-Null
+            Write-Log 'Abrir sem a tela de administrador: ligado.'; Show-Toast 'Pronto: o Janus abre sem a tela de permissão'
+        } else {
+            Unregister-ScheduledTask -TaskPath '\Janus\' -TaskName 'Abrir o Janus' -Confirm:$false -ErrorAction Stop
+            Write-Log 'Abrir sem a tela de administrador: desligado.'; Show-Toast 'O Janus volta a pedir permissão ao abrir'
+        }
+    } catch { Show-Toast ((T 'Não deu certo: {0}') -f $_.Exception.Message); Write-Log ('Abrir sem a tela de administrador falhou: ' + $_.Exception.Message) }
+}
 function Test-Autostart { return [bool](Get-ScheduledTask -TaskPath '\Janus\' -TaskName 'Iniciar com o Windows' -ErrorAction SilentlyContinue) }
 function Set-Autostart([bool]$on) {
     try {
@@ -4681,7 +4744,8 @@ if ($Teste) {
     Write-Output ("icones de jogos: {0} de {1} | sem: {2}" -f @($gr.Games | Where-Object { Get-GameIcon $_.Icon }).Count, @($gr.Games).Count, ((@($gr.Games | Where-Object { -not (Get-GameIcon $_.Icon) }) | ForEach-Object { $_.Name }) -join ', '))
     $sw2 = [Diagnostics.Stopwatch]::StartNew(); $fi = @(Get-NetInterference); Write-Output ("interferencias no failover ({0} ms): {1}" -f $sw2.ElapsedMilliseconds, $(if ($fi.Count) { ($fi | ForEach-Object { $_.Name }) -join ' | ' } else { 'nenhuma' }))
     Write-Output ("override faria: " + ((Get-FoOverridePlan $fi) -join ' | '))
-    $gp = New-GamePrompt @{ Name = 'Overwatch'; Source = 'Battle.net' }; Write-Output ("tamanho do link da IA: {0} (limite 2000)" -f ($AiList.claude.Ask -f [uri]::EscapeDataString($gp)).Length)
+    $gb = Save-GameBrief @{ Name = 'Overwatch'; Source = 'Battle.net' }; Write-Output ("ficha do jogo: {0} ({1} caracteres)" -f (Split-Path -Leaf $gb), (Get-Content -LiteralPath $gb -Raw).Length)
+    Write-Output ("abrir sem a tela do administrador: {0}" -f (Test-NoUac))
     Write-Output ("rede: icones={0} | ordem: {1}" -f (Get-NetGlyphs).Length, ((Get-NetAdapters | ForEach-Object { $_.Name }) -join ' > '))
     Write-Output ("iniciar com o Windows: {0} | fechar: {1} | novidades: ok" -f (Test-Autostart), (Show-CloseAsk)); Show-Changelog '0.1.0-beta.2'
     $script:Mon = @{ Ram = 97; CpuTemp = $null; Gpu = @{ Temp = 92; Use = 50 }; Ssd = @() }; $script:Config.NotifyItems = @('gputemp', 'ram'); $script:Config.NotifyRepeat = 'uma'
@@ -4737,7 +4801,7 @@ try {
     }
     $script:Poll.Start()
     $W.add_Closed({ try { if ($script:Tray) { $script:Tray.Visible = $false; $script:Tray.Dispose() } } catch {}; $W.Dispatcher.InvokeShutdown() })
-    if ($Bandeja) { $script:TrayTipShown = $true; Hide-ToTray } else { [void]$W.Show() }
+    if ($Bandeja) { $script:TrayTipShown = $true; Hide-ToTray } else { [void]$W.Show(); $W.Topmost = $true; $W.Topmost = $false; [void]$W.Activate() }   # aberto por tarefa agendada: garante que aparece na frente
     [System.Windows.Threading.Dispatcher]::Run()
     $script:CleanExit = $true
 } catch {

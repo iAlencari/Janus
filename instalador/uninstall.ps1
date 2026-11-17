@@ -38,6 +38,7 @@ else {
     Remove-Item -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$Chave" -Recurse -Force -ErrorAction SilentlyContinue
     # tarefa "Iniciar com o Windows" (as tarefas de religar a segurança ficam: elas só religam o que foi desligado)
     Unregister-ScheduledTask -TaskPath '\Janus\' -TaskName 'Iniciar com o Windows' -Confirm:$false -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskPath '\Janus\' -TaskName 'Abrir o Janus' -Confirm:$false -ErrorAction SilentlyContinue
 }
 foreach ($l in $lnks) { Remove-Item -LiteralPath $l -Force -ErrorAction SilentlyContinue }
 Remove-Item -LiteralPath $Pasta -Recurse -Force -ErrorAction SilentlyContinue

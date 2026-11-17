@@ -95,6 +95,46 @@ public static class PANative {
 }
 "@
 }
+# Taxa de atualização (Hz) de cada monitor: lista "dispositivo|largura|altura|Hz atual|Hz máximo na mesma resolução" e troca o Hz
+if (-not ('JanusDisplay' -as [type])) {
+Add-Type -TypeDefinition @"
+using System; using System.Collections.Generic; using System.Runtime.InteropServices;
+public static class JanusDisplay {
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] public struct DEVMODE {
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst=32)] public string dmDeviceName;
+    public short dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra; public int dmFields;
+    public int dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput;
+    public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst=32)] public string dmFormName;
+    public short dmLogPixels; public int dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
+    public int dmICMMethod, dmICMIntent, dmMediaType, dmDitherType, dmReserved1, dmReserved2, dmPanningWidth, dmPanningHeight; }
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] public struct DISPLAY_DEVICE {
+    public int cb; [MarshalAs(UnmanagedType.ByValTStr, SizeConst=32)] public string DeviceName;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst=128)] public string DeviceString; public int StateFlags;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst=128)] public string DeviceID; [MarshalAs(UnmanagedType.ByValTStr, SizeConst=128)] public string DeviceKey; }
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern bool EnumDisplayDevices(string dev, int i, ref DISPLAY_DEVICE dd, int flags);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern bool EnumDisplaySettings(string dev, int mode, ref DEVMODE dm);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int ChangeDisplaySettingsEx(string dev, ref DEVMODE dm, IntPtr hwnd, int flags, IntPtr p);
+  static DEVMODE New() { DEVMODE d = new DEVMODE(); d.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE)); return d; }
+  public static string[] List() {
+    List<string> l = new List<string>();
+    for (int i = 0; i < 16; i++) {
+      DISPLAY_DEVICE dd = new DISPLAY_DEVICE(); dd.cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE));
+      if (!EnumDisplayDevices(null, i, ref dd, 0)) break;
+      if ((dd.StateFlags & 1) == 0) continue;   // só monitores ligados à área de trabalho
+      DEVMODE cur = New(); if (!EnumDisplaySettings(dd.DeviceName, -1, ref cur)) continue;
+      int max = cur.dmDisplayFrequency; DEVMODE m = New();
+      for (int k = 0; EnumDisplaySettings(dd.DeviceName, k, ref m); k++) {
+        if (m.dmPelsWidth == cur.dmPelsWidth && m.dmPelsHeight == cur.dmPelsHeight && m.dmBitsPerPel == cur.dmBitsPerPel && m.dmDisplayFrequency > max) max = m.dmDisplayFrequency; }
+      l.Add(dd.DeviceName + "|" + cur.dmPelsWidth + "|" + cur.dmPelsHeight + "|" + cur.dmDisplayFrequency + "|" + max); }
+    return l.ToArray(); }
+  public static int SetHz(string dev, int hz) {
+    DEVMODE cur = New(); if (!EnumDisplaySettings(dev, -1, ref cur)) return -99;
+    cur.dmDisplayFrequency = hz; cur.dmFields = 0x400000;   // só a frequência
+    return ChangeDisplaySettingsEx(dev, ref cur, IntPtr.Zero, 0x01, IntPtr.Zero); }   // 0x01 = grava no registro; 0 = ok
+}
+"@
+}
 # ID próprio na barra de tarefas: assim ela mostra o ícone do Janus, e não o do PowerShell
 try { [void][PANative]::SetCurrentProcessExplicitAppUserModelID('iAlencari.Janus') } catch {}
 
@@ -109,6 +149,10 @@ function Get-PowerIndex([string]$sub, [string]$setting) {
     $hex = @($q | Select-String -Pattern ':\s*0x([0-9a-fA-F]+)\s*$' | ForEach-Object { [Convert]::ToInt32($_.Matches[0].Groups[1].Value, 16) })
     # as duas últimas linhas são sempre o valor atual na tomada (AC) e na bateria (DC); antes delas podem vir mínimo/máximo possíveis
     if ($hex.Count -ge 2) { return $hex[-2] } elseif ($hex.Count -eq 1) { return $hex[0] } else { return $null }
+}
+# monitores abaixo do Hz máximo na resolução atual (diferença de 1 Hz é o mesmo modo: 239,76 aparece como 239 e 240)
+function Get-HzLow {
+    @([JanusDisplay]::List() | ForEach-Object { $p = $_ -split '\|'; if (([int]$p[4] - [int]$p[3]) -gt 1) { @{ Dev = $p[0]; W = [int]$p[1]; H = [int]$p[2]; Cur = [int]$p[3]; Max = [int]$p[4] } } })
 }
 function Get-IGpu {
     $all = @(Get-PnpDevice -Class Display -ErrorAction SilentlyContinue | Where-Object { $_.Present })
@@ -509,6 +553,16 @@ $script:Tweaks = @(
                if (@($vc | Where-Object { $_.Name -eq $g.FriendlyName }).Count) { throw 'Há um monitor ligado no vídeo integrado. Mude o cabo para a placa de vídeo dedicada antes.' }
                Disable-PnpDevice -InstanceId $g.InstanceId -Confirm:$false
            } else { Enable-PnpDevice -InstanceId $g.InstanceId -Confirm:$false } } }
+
+  @{ Id='tela-hz'; Prio=1; Page='Graficos'; Scope='pc'; Glyph=[char]0xE7F4; Title='Usar a taxa de atualização máxima da tela'
+     Desc='Deixa cada monitor na maior taxa (Hz) que ele oferece, sem mudar a resolução. Mais Hz deixa a imagem mais fluida e diminui o atraso. É comum o monitor de 144 Hz ou mais ficar em 60 Hz sem a pessoa saber.'
+     Caveat='a imagem piscar ou sumir na taxa máxima (cabo antigo ou fraco). Se você não confirmar em 15 segundos, a tela volta sozinha para a taxa anterior.'
+     Risk=0; Restart='nenhum'; Rec=$true; RecWhy='imagem mais fluida'
+     Keys=@()
+     Available={ @([JanusDisplay]::List()).Count -gt 0 }; UnavailableWhy='Não consegui ler os monitores deste PC.'
+     Auto={ param($pc) $low = @(Get-HzLow); if ($low.Count) { @{ Apply=$true; Why=('monitor em ' + (($low | ForEach-Object { '{0} Hz (máximo {1} Hz)' -f $_.Cur, $_.Max }) -join ', ')) } } else { @{ Apply=$false; Why='os monitores já estão na taxa máxima' } } }
+     Get={ -not @(Get-HzLow).Count }
+     Set={ param($on) if ($on) { Set-HzMax } else { Restore-Hz } } }
 
   @{ Id='wifi-cabo'; Prio=4; Page='Rede'; Scope='pc'; Glyph=[char]0xE701; Title='Manter o Wi-Fi ligado junto com o cabo'
      Desc='O Windows deixa o Wi-Fi conectado mesmo com o cabo ligado. Assim programas que usam duas internets ao mesmo tempo (como o Multi Internet do ExitLag) já têm a reserva pronta.'
@@ -3447,11 +3501,18 @@ function Build-Jogos {
         $gi.Margin = '0,0,14,0'; $gi.VerticalAlignment = 'Center'; Put $gr $gi 0
         $sp = New-Object System.Windows.Controls.StackPanel; $sp.VerticalAlignment = 'Center'
         $sp.Children.Add((New-Text $g.Name 14 '#E6E9EF' 'SemiBold')) | Out-Null
-        $sp.Children.Add((New-Text $g.Source 11.5 '#7F8899')) | Out-Null
+        # loja · PCGamingWiki (link discreto em vez de mais um botão)
+        $sub = New-Object System.Windows.Controls.StackPanel; $sub.Orientation = 'Horizontal'
+        $sub.Children.Add((New-Text $g.Source 11.5 '#7F8899')) | Out-Null
+        $sub.Children.Add((New-Text '  ·  ' 11.5 '#4A5262')) | Out-Null
+        $wl = New-Text 'PCGamingWiki' 11.5 '#7F8899'; $wl.Cursor = 'Hand'; $wl.Tag = ('https://www.pcgamingwiki.com/w/index.php?search=' + [uri]::EscapeDataString($g.Name))
+        $wl.ToolTip = (T 'Abre a página do jogo no PCGamingWiki (correções e configurações da comunidade).')
+        $wl.add_MouseEnter({ $this.TextDecorations = [System.Windows.TextDecorations]::Underline }); $wl.add_MouseLeave({ $this.TextDecorations = $null })
+        $wl.add_MouseLeftButtonUp({ Open-Url $this.Tag }); $sub.Children.Add($wl) | Out-Null
+        $sp.Children.Add($sub) | Out-Null
         Put $gr $sp 1
         $bs = New-Object System.Windows.Controls.StackPanel; $bs.Orientation = 'Horizontal'; $bs.VerticalAlignment = 'Center'
         if ($g.Manual) { $rm = New-Button 'Remover' 'Ghost' $g.Path; $rm.Padding = '10,5'; $rm.FontSize = 12; $rm.Margin = '0,0,8,0'; $rm.ToolTip = (T 'Tira da lista (não apaga o jogo).'); $rm.add_Click({ Remove-ManualGame $this.Tag }); $bs.Children.Add($rm) | Out-Null }
-        $wk = New-LinkButton 'PCGamingWiki' ('https://www.pcgamingwiki.com/w/index.php?search=' + [uri]::EscapeDataString($g.Name)); $wk.Margin = '0,0,8,0'; $bs.Children.Add($wk) | Out-Null
         if ($ga -and $ga.Exe) {
             $ob = New-Button 'Otimizar' $(if ($aiOn) { 'Ghost' } else { 'Accent' }) $g.Name; $ob.Padding = '10,5'; $ob.FontSize = 12; $ob.Margin = '0,0,8,0'
             $ob.ToolTip = ((T 'Abre o {0} para aplicar a configuração recomendada pela fabricante neste jogo.') -f $ga.Name)
@@ -3612,6 +3673,8 @@ $Changelog = [ordered]@{
         'Jogos: botão Otimizar abre o NVIDIA App (ou AMD Software) para aplicar a configuração recomendada pela fabricante. A IA fica atrás do botão "Ativar configurações por IA".',
         'Cópias que não batem com uma versão publicada ganham o botão "Instalar versão original mais recente".',
         'Instalador em chinês e espanhol.',
+        'Sugestão nova: usar a taxa de atualização (Hz) máxima da tela, com volta automática em 15 segundos se a imagem falhar.',
+        'Ao fechar, o Janus só fica nos ícones ocultos se o Failover ou algum aviso do hardware estiver ligado; senão, fecha de vez.',
         'Procurar manualmente: adicione à aba Jogos um jogo que a busca não achou.',
         'Esta janela de novidades.',
         'Saíram o botão Testes e o aviso de piscar o ícone.'
@@ -3700,6 +3763,45 @@ function Show-CloseAsk {
 
 # ---------- iniciar com o Windows ----------
 # tarefa agendada no logon com privilégio máximo: abre sem a pergunta do UAC, direto nos ícones ocultos
+# ---------- taxa de atualização (Hz) da tela ----------
+$HzFile = Join-Path $DataDir 'hz-anterior.json'   # Hz de antes, para "voltar ao padrão"
+# Pergunta se a imagem está normal; sem resposta em 15 s, devolve $false (a tela volta para a taxa anterior)
+function Confirm-DisplayOk {
+    if ($Teste) { return $true }
+    $d = New-StyledWindow 'Tela' 460; $d.Topmost = $true
+    $root = New-Object System.Windows.Controls.StackPanel; $root.Margin = '26,22,26,22'
+    $root.Children.Add((New-Text 'A imagem está normal?' 18 '#E6E9EF' 'SemiBold')) | Out-Null
+    $tx = New-Text 'Se a tela piscar ou ficar preta, espere: ela volta sozinha para a taxa anterior.' 12.5 '#AEB6C4'; $tx.Margin = '0,8,0,16'; $root.Children.Add($tx) | Out-Null
+    $br = New-Object System.Windows.Controls.StackPanel; $br.Orientation = 'Horizontal'; $br.HorizontalAlignment = 'Right'
+    $bv = New-Button 'Voltar' 'Ghost'; $bv.add_Click({ [System.Windows.Window]::GetWindow($this).DialogResult = $false }); $br.Children.Add($bv) | Out-Null
+    $bk = New-Button ((T 'Manter ({0})') -f 15) 'Accent'; $bk.Margin = '8,0,0,0'; $bk.add_Click({ [System.Windows.Window]::GetWindow($this).DialogResult = $true }); $br.Children.Add($bk) | Out-Null
+    $root.Children.Add($br) | Out-Null; $d.Content = $root
+    $script:HzLeft = 15
+    $tm = New-Object System.Windows.Threading.DispatcherTimer; $tm.Interval = [TimeSpan]::FromSeconds(1); $tm.Tag = @{ D = $d; B = $bk }
+    $tm.add_Tick({ $script:HzLeft--; $this.Tag.B.Content = ((T 'Manter ({0})') -f $script:HzLeft); if ($script:HzLeft -le 0) { $this.Stop(); try { $this.Tag.D.DialogResult = $false } catch {} } })
+    $tm.Start()
+    $wasBusy = $script:Busy; $script:Busy = $true
+    try { $ok = $d.ShowDialog() } finally { $tm.Stop(); $script:Busy = $wasBusy }
+    return ($ok -eq $true)
+}
+function Set-HzMax {
+    $low = @(Get-HzLow); if (-not $low.Count) { return }
+    [IO.File]::WriteAllText($HzFile, (ConvertTo-Json @($low | ForEach-Object { @{ Dev = $_.Dev; Hz = $_.Cur } }) -Compress), (New-Object Text.UTF8Encoding($false)))
+    foreach ($m in $low) { $r = [JanusDisplay]::SetHz($m.Dev, $m.Max); if ($r -ne 0) { throw ((T 'O Windows recusou {0} Hz neste monitor (código {1}).') -f $m.Max, $r) } }
+    if (-not (Confirm-DisplayOk)) {
+        foreach ($m in $low) { [void][JanusDisplay]::SetHz($m.Dev, $m.Cur) }
+        Remove-Item -LiteralPath $HzFile -Force -ErrorAction SilentlyContinue
+        throw (T 'A tela voltou para a taxa anterior (não confirmada).')
+    }
+    Write-Log ('Taxa da tela: ' + (($low | ForEach-Object { '{0} {1} Hz -> {2} Hz' -f $_.Dev, $_.Cur, $_.Max }) -join '; '))
+}
+function Restore-Hz {
+    if (-not (Test-Path -LiteralPath $HzFile)) { return }
+    foreach ($m in @(Get-Content -LiteralPath $HzFile -Raw | ConvertFrom-Json)) { [void][JanusDisplay]::SetHz([string]$m.Dev, [int]$m.Hz) }
+    Remove-Item -LiteralPath $HzFile -Force -ErrorAction SilentlyContinue
+    Write-Log 'Taxa da tela voltou ao que era antes.'
+}
+
 # ---------- abrir sem a tela de administrador do Windows ----------
 # Tarefa agendada sem gatilho, com privilégio máximo: o atalho normal a chama e o Janus abre sem a pergunta do UAC.
 # Em troca, qualquer programa da conta também consegue abrir o Janus como administrador sem perguntar (por isso é opção).
@@ -4143,6 +4245,22 @@ function Get-FoOverridePlan($found) {
     }
     return , $l
 }
+# Antes de ligar o Failover: mostra o que interfere. Botões curtos (Override / Ligar mesmo assim / Cancelar);
+# o Override abre uma segunda janela explicando exatamente o que será feito. Devolve $true para ligar.
+function Confirm-FoStart($found) {
+    $found = @($found | Where-Object { $_ }); if (-not $found.Count) { return $true }
+    Write-Log ('Failover: interferências encontradas: ' + (($found | ForEach-Object { $_.Name }) -join '; '))
+    $lst = ($found | ForEach-Object { '• ' + $_.Name + "`n   " + (T $_.Why) }) -join "`n`n"
+    $plan = @(Get-FoOverridePlan $found)
+    $btns = @(@('go', 'Ligar mesmo assim', 'Ghost'), @('no', 'Cancelar', 'Accent'))
+    if ($plan.Count) { $btns = @(, @('kill', 'Override', 'Danger')) + $btns }
+    $r = Show-Choice 'Failover' 'Algo pode interferir no Failover' ((T 'Encontrei:') + "`n`n" + $lst + "`n`n" + (T 'Recomendado: feche ou desligue isso antes. Se ligar mesmo assim, as trocas de conexão podem ficar erradas ou ir e voltar.')) $btns 'warn'
+    if ($r -eq 'go') { return $true }
+    if ($r -ne 'kill') { return $false }
+    $r2 = Show-Choice 'Override' 'Override: derrubar e desativar? (não recomendado)' ((T 'O Janus vai:') + "`n`n" + (($plan | ForEach-Object { '• ' + $_ }) -join "`n") + "`n`n" + (T 'Se houver uma partida em andamento, a conexão do jogo cai na hora. Os serviços ficam desativados até você reativar. Tudo fica anotado no Registro de mudanças, e o botão Reativar (em Internet e DNS) volta tudo como estava.')) @(@('yes', 'Derrubar e desativar', 'Danger'), @('no', 'Cancelar', 'Accent')) 'crit'
+    if ($r2 -ne 'yes') { return $false }
+    Invoke-FoOverride $found; return $true
+}
 function Invoke-FoOverride($found) {
     $rec = New-Object System.Collections.ArrayList
     foreach ($x in @($script:Config.FoOverride | Where-Object { $_ })) { [void]$rec.Add($x) }
@@ -4317,21 +4435,7 @@ function Add-FailoverSection {
     $sw.add_Click({
         $c = Get-FoCfg
         if ($this.IsChecked) {
-            # antes de ligar: procura o que pode brigar pelas conexões e mostra o que é
-            $ok = $true; $found = @(Get-NetInterference)
-            if ($found.Count) {
-                $lst = ($found | ForEach-Object { '• ' + $_.Name + "`n   " + (T $_.Why) }) -join "`n`n"
-                Write-Log ('Failover: interferências encontradas: ' + (($found | ForEach-Object { $_.Name }) -join '; '))
-                $plan = @(Get-FoOverridePlan $found)
-                $btns = @(@('go', 'Ligar mesmo assim', 'Ghost'), @('no', 'Cancelar', 'Accent'))
-                if ($plan.Count) { $btns = @(, @('kill', 'Derrubar e desativar (não recomendado)', 'Danger')) + $btns }
-                $r = Show-Choice 'Failover' 'Algo pode interferir no Failover' ((T 'Encontrei:') + "`n`n" + $lst + "`n`n" + (T 'Recomendado: feche ou desligue isso antes. Se ligar mesmo assim, as trocas de conexão podem ficar erradas ou ir e voltar.')) $btns 'warn'
-                if ($r -eq 'kill') {
-                    $r2 = Show-Choice 'Failover' 'Derrubar e desativar?' ((T 'O Janus vai:') + "`n`n" + (($plan | ForEach-Object { '• ' + $_ }) -join "`n") + "`n`n" + (T 'Se houver uma partida em andamento, a conexão do jogo cai na hora. Os serviços ficam desativados até você reativar. Tudo fica anotado no Registro de mudanças, e o botão Reativar (em Internet e DNS) volta tudo como estava.')) @(@('yes', 'Derrubar e desativar', 'Danger'), @('no', 'Cancelar', 'Accent')) 'crit'
-                    $ok = ($r2 -eq 'yes'); if ($ok) { Invoke-FoOverride $found }
-                } else { $ok = ($r -eq 'go') }
-            }
-            if ($ok -and (Start-Failover)) { $c.On = $true } else { $this.IsChecked = $false; $c.On = $false }
+            if ((Confirm-FoStart @(Get-NetInterference)) -and (Start-Failover)) { $c.On = $true } else { $this.IsChecked = $false; $c.On = $false }
         } else { Stop-Failover; $c.On = $false }
         Save-Config; $tm = New-Object System.Windows.Threading.DispatcherTimer; $tm.Interval = [TimeSpan]::FromMilliseconds(380); $tm.add_Tick({ $this.Stop(); Show-Page 'Rede' $ui.Scroll.VerticalOffset }); $tm.Start()
     })
@@ -4703,6 +4807,8 @@ $W.add_ContentRendered({
 $W.add_Closing({
     param($s, $e)
     if ($script:CleanExit -or $Teste) { return }
+    # nada para fazer em segundo plano (Failover desligado e nenhum aviso de hardware ligado): fecha direto, sem perguntar
+    if (-not ((Get-FoCfg).On -or @($script:Config.NotifyItems | Where-Object { $_ }).Count)) { return }
     if ($script:Config.Tray) { $e.Cancel = $true; Hide-ToTray; return }
     if ($script:Config.CloseAsked) { return }
     $r = Show-CloseAsk
@@ -4776,6 +4882,9 @@ if ($Teste) {
         foreach ($k in $script:Pages.Keys) { Show-Page $k }
         Show-Welcome; Show-LanguageDialog; [void](Show-ReportDialog 'repetido' 'Erro: x'); [void](Show-Choice 'Descartar sugestão' 'x' 'Quer esconder esta sugestão só até fechar o Janus, ou para sempre? As descartadas para sempre podem ser trazidas de volta no fim desta aba.' @(@('forever', 'Para sempre', 'Danger'), @('session', 'Só até fechar o app', 'Ghost')) 'info')
         [void](Show-ChangePreview @($script:Tweaks | Where-Object { $_.Rec -eq $true }) $null 'Ajustes automáticos para este PC')
+        # janelas que só abrem em ações: monta cada uma para a cobertura de tradução
+        [void](Show-CloseAsk); Show-NotifySettings; Show-Changelog
+        [void](Confirm-FoStart @(@{ Name = 'ExitLag'; Why = 'Este programa pode controlar por onde a internet sai (VPN ou acelerador de jogo, como o Multi Internet do ExitLag).'; Procs = @('x.exe') }))
         if ($env:JANUS_FOTOS) {
             foreach ($pg in @($(if ($env:JANUS_PAGINAS) { $env:JANUS_PAGINAS -split ',' } else { 'Inicio', 'Manutencao', 'Sobre' }))) {
                 Show-Page $pg

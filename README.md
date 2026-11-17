@@ -4,11 +4,9 @@
 <p align="center"><b>Ajustes do Windows explicados e reversíveis.</b><br>
 Português · <a href="#english">English</a> · <a href="#español">Español</a> · <a href="#中文">中文</a></p>
 
-> **Beta.** O Janus ainda está em construção. A primeira versão estável será a 0.1 ou a 1.0.
+> **Beta.** O Janus ainda está em construção. A primeira versão estável é a 0.1 BETA.
 
 O Janus mostra o **estado real** de cada configuração do Windows, explica cada mudança em linguagem simples e deixa você **desfazer tudo**.
-
-O nome vem do deus romano das portas e passagens. Janus tem duas faces: uma olha para frente, a outra para trás. No app, uma face aplica e a outra desfaz.
 
 ## O que ele faz
 

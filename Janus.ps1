@@ -65,9 +65,13 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     else {
         # opção "abrir sem a tela de administrador": uma tarefa agendada (criada com permissão) abre o Janus já como administrador
         if (-not $SoRelatorio) {
-            $tn = '\Janus\Abrir o Janus'
-            $tx = & schtasks.exe /query /tn $tn /xml 2>$null
-            if ($LASTEXITCODE -eq 0 -and (($tx -join '') -like ('*' + $PSCommandPath + '*'))) { $null = & schtasks.exe /run /tn $tn 2>$null; if ($LASTEXITCODE -eq 0) { exit } }
+            # ErrorAction 'Stop' transforma a mensagem do schtasks (tarefa não existe) em erro fatal: aqui ela é esperada
+            $tn = '\Janus\Abrir o Janus'; $ErrorActionPreference = 'Continue'
+            try {
+                $tx = & schtasks.exe /query /tn $tn /xml 2>$null
+                if ($LASTEXITCODE -eq 0 -and (($tx -join '') -like ('*' + $PSCommandPath + '*'))) { $null = & schtasks.exe /run /tn $tn 2>$null; if ($LASTEXITCODE -eq 0) { exit } }
+            } catch {}
+            $ErrorActionPreference = 'Stop'
         }
         $fwd = @('-NoProfile','-ExecutionPolicy','Bypass','-STA','-WindowStyle','Hidden','-File',"`"$PSCommandPath`"")
         if ($SoRelatorio) { $fwd += '-SoRelatorio' }

@@ -1,0 +1,21 @@
+# dados locais de quem usa (nunca vão para o GitHub)
+log.txt
+config.json
+sessao.lock
+ultimo-erro.txt
+backups/
+ajuda/
+relatorios/
+versao-anterior/
+# edições especiais de amigos/testers (têm nomes de pessoas)
+edicao*.json
+ferramentas/edicao-*.json
+mostrar.pedido
+fechar.pedido
+# pasta servida pelo túnel de testes
+atualizacoes-servidor/
+# saídas de build
+saida/
+# NUNCA publicar a chave privada
+*.pfx
+*.key

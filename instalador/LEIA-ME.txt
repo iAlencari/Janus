@@ -1,0 +1,27 @@
+﻿JANUS - ajustes do Windows explicados e reversíveis (beta)
+==========================================================
+https://github.com/iAlencari/Janus
+
+Ideia e pedido: iAlencari
+Criado com: Claude Code (claude.ai/code), escrito com o Claude Opus 5.5 e revisado com o Claude Fable 5.2
+Licença: GPL-3.0 (arquivo LICENSE). O nome "Janus" e o ícone são do projeto
+original: versões modificadas precisam usar outro nome.
+
+ANTES DE USAR
+- O app roda como administrador porque muda configurações do Windows.
+- Antes de mudar algo ele cria um ponto de restauração e um backup .reg.
+- Antivírus, firewall, UAC e integridade de memória ficam ligados (só o que você pedir é desligado, com avisos).
+- Ficou com dúvida em algum item? Use o botão "?" ao lado dele.
+
+ONDE FICA CADA COISA
+- Programa: C:\Program Files\Janus
+- Registro de mudanças, backups, ajuda e relatórios: %LOCALAPPDATA%\Janus
+
+DESINSTALAR
+Configurações > Aplicativos > Aplicativos instalados > Janus > Desinstalar.
+Os ajustes ativos continuam no Windows. Para voltar tudo ao padrão antes,
+use a aba Mudanças aplicadas > Desfazer todos.
+
+---
+EN: Janus explains every Windows tweak and lets you undo all of them.
+Ideas: iAlencari. Built with Claude Code (Claude Opus 5.5, reviewed with Claude Fable 5.2). License: GPL-3.0.

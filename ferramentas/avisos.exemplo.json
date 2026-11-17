@@ -1,0 +1,12 @@
+[
+  {
+    "afeta": ["0.1.0-beta.1"],
+    "nivel": "warn",
+    "texto": {
+      "pt": "Exemplo: a versão 0.1 beta 1 tem um erro no ajuste X. Atualize.",
+      "en": "Example: version 0.1 beta 1 has a bug in tweak X. Please update.",
+      "zh": "示例：0.1 beta 1 版本的调整 X 有错误，请更新。",
+      "es": "Ejemplo: la versión 0.1 beta 1 tiene un error en el ajuste X. Actualiza."
+    }
+  }
+]

@@ -2599,17 +2599,27 @@ $DnsList = @(
   @{ Id='ultradns'; Name='UltraDNS (ex-Verisign)'; Who='Vercara / DigiCert (EUA)'; V4=@('64.6.64.6','64.6.65.6'); V6=@('2620:74:1b::1:1','2620:74:1c::2:2'); Doh=''; Filter='Sem filtro'; Note='' }
   @{ Id='ultradns-sec'; Name='UltraDNS Proteção (ex-Neustar)'; Who='Vercara / DigiCert (EUA)'; V4=@('156.154.70.2','156.154.71.2'); V6=@('2610:a1:1018::2','2610:a1:1019::2'); Doh=''; Filter='Bloqueia sites maliciosos'; Note='' }
 )
-function Get-NetAdapters {
+# Conexões ativas (cabo primeiro). Cada leitura do Windows custa ~1 s, e a aba Rede usa várias vezes ao montar:
+# guarda o resultado por 8 s (-Fresh força ler de novo; trocar o DNS limpa a memória)
+$script:NetAdCache = $null; $script:NetAdAt = [datetime]::MinValue
+function Get-NetAdapters([switch]$Fresh) {
+    if (-not $Fresh -and $null -ne $script:NetAdCache -and ((Get-Date) - $script:NetAdAt).TotalSeconds -lt 8) { return $script:NetAdCache }
     $route = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object { $_.RouteMetric + $_.InterfaceMetric })
     $primary = $(if ($route.Count) { $route[0].InterfaceIndex } else { -1 })
-    @(Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' -and $_.InterfaceDescription -notmatch 'Hyper-V|Virtual|Loopback|VPN|TAP|WireGuard|ExitLag' } | ForEach-Object {
-        $v4 = @(Get-NetIPAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike '169.254.*' } | Select-Object -First 1).IPAddress
-        $v6 = @(Get-NetIPAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue | Where-Object { $_.PrefixOrigin -ne 'WellKnown' -and $_.IPAddress -notlike 'fe80*' -and $_.AddressState -eq 'Preferred' } | Select-Object -First 1).IPAddress
-        $dns = @((Get-DnsClientServerAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses)
+    # uma leitura de cada tipo para todos os adaptadores (antes era uma por adaptador)
+    $ips = @(Get-NetIPAddress -ErrorAction SilentlyContinue)
+    $dnsAll = @(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue)
+    $r = @(Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' -and $_.InterfaceDescription -notmatch 'Hyper-V|Virtual|Loopback|VPN|TAP|WireGuard|ExitLag' } | ForEach-Object {
+        $ix = $_.ifIndex
+        $v4 = @($ips | Where-Object { $_.InterfaceIndex -eq $ix -and $_.AddressFamily -eq 'IPv4' -and $_.IPAddress -notlike '169.254.*' } | Select-Object -First 1).IPAddress
+        $v6 = @($ips | Where-Object { $_.InterfaceIndex -eq $ix -and $_.AddressFamily -eq 'IPv6' -and $_.PrefixOrigin -ne 'WellKnown' -and $_.IPAddress -notlike 'fe80*' -and $_.AddressState -eq 'Preferred' } | Select-Object -First 1).IPAddress
+        $dns = @(($dnsAll | Where-Object { $_.InterfaceIndex -eq $ix }).ServerAddresses)
         $static = [string](Get-RegValue ("HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\" + $_.InterfaceGuid) 'NameServer')
-        @{ Index = $_.ifIndex; Name = $_.Name; Desc = $_.InterfaceDescription; Guid = $_.InterfaceGuid; Speed = $_.LinkSpeed; Wifi = ($_.Name -match 'Wi-?Fi' -or $_.InterfaceDescription -match 'Wi-?Fi|Wireless|802\.11')
-           V4 = $v4; V6 = $v6; Dns = $dns; Manual = [bool]$static; Primary = ($_.ifIndex -eq $primary) }
+        @{ Index = $ix; Name = $_.Name; Desc = $_.InterfaceDescription; Guid = $_.InterfaceGuid; Speed = $_.LinkSpeed; Wifi = ($_.Name -match 'Wi-?Fi' -or $_.InterfaceDescription -match 'Wi-?Fi|Wireless|802\.11')
+           V4 = $v4; V6 = $v6; Dns = $dns; Manual = [bool]$static; Primary = ($ix -eq $primary) }
     } | Sort-Object @{ e = { [int][bool]$_.Wifi } }, @{ e = { $_.Index } })   # cabo primeiro, depois Wi-Fi
+    $script:NetAdCache = $r; $script:NetAdAt = Get-Date
+    return $r
 }
 function Get-CurrentDnsProvider($adapters) {
     $used = @($adapters | Where-Object { $_.Manual } | ForEach-Object { $_.Dns } | Select-Object -First 1)
@@ -2675,7 +2685,7 @@ function Set-DnsProvider($p) {
     } catch {
         Write-Log ('ERRO ao trocar o DNS: ' + $_.Exception.Message)
         Show-Choice 'DNS' 'Não consegui trocar o DNS' $_.Exception.Message @(@('ok', 'Ok', 'Accent')) 'crit' | Out-Null
-    } finally { $W.Cursor = $null }
+    } finally { $W.Cursor = $null; $script:NetAdAt = [datetime]::MinValue }   # DNS mudou: ler as conexões de novo
     Show-Page 'Rede' $ui.Scroll.VerticalOffset
 }
 function Add-DnsSection {
@@ -3425,8 +3435,8 @@ function Get-GpuApp {
     $gpu = [string](Get-PcInfo).Gpu
     $nv = Join-Path $env:ProgramFiles 'NVIDIA Corporation\NVIDIA App\CEF\NVIDIA App.exe'
     $amd = Join-Path $env:ProgramFiles 'AMD\CNext\CNext\RadeonSoftware.exe'
-    if ($gpu -match 'NVIDIA') { return @{ Name = 'NVIDIA App'; Exe = $(if (Test-Path -LiteralPath $nv) { $nv } else { '' }); Get = 'https://www.nvidia.com/software/nvidia-app/'; Hint = 'No NVIDIA App, abra "Jogos e apps", escolha {0} e clique em Otimizar.' } }
-    if ($gpu -match 'Radeon|AMD') { return @{ Name = 'AMD Software'; Exe = $(if (Test-Path -LiteralPath $amd) { $amd } else { '' }); Get = 'https://www.amd.com/support/download/drivers.html'; Hint = 'No AMD Software, abra "Jogos", escolha {0} e ajuste o perfil gráfico.' } }
+    if ($gpu -match 'NVIDIA') { return @{ Name = 'NVIDIA App'; Exe = $(if (Test-Path -LiteralPath $nv) { $nv } else { '' }); Get = 'https://www.nvidia.com/software/nvidia-app/'; Hint = 'No NVIDIA App, abra "Jogos e apps", escolha o jogo e clique em Otimizar: ele aplica a configuração recomendada pela NVIDIA para esta placa.' } }
+    if ($gpu -match 'Radeon|AMD') { return @{ Name = 'AMD Software'; Exe = $(if (Test-Path -LiteralPath $amd) { $amd } else { '' }); Get = 'https://www.amd.com/support/download/drivers.html'; Hint = 'No AMD Software, abra "Jogos", escolha o jogo e ajuste o perfil gráfico recomendado pela AMD.' } }
     return $null
 }
 function Build-Jogos {
@@ -3439,9 +3449,11 @@ function Build-Jogos {
         $vg = New-Object System.Windows.Controls.Grid; Grid-Cols $vg @('*', 'Auto')
         $vs = New-Object System.Windows.Controls.StackPanel; $vs.Margin = '0,0,16,0'
         $vs.Children.Add((New-Text ((T 'Configurações recomendadas pelo {0}') -f $ga.Name) 15 '#E6E9EF' 'SemiBold')) | Out-Null
-        $vt = New-Text $(if ($ga.Exe) { (T 'O {0} tem a configuração recomendada pela fabricante para cada jogo que ele reconhece, e aplica sozinho. Use o botão Otimizar de cada jogo abaixo.') -f $ga.Name } else { (T 'O {0} não está instalado. Ele traz a configuração recomendada pela fabricante para cada jogo e aplica sozinho.') -f $ga.Name }) 12.5 '#9AA3B2'; $vt.Margin = '0,4,0,0'; $vs.Children.Add($vt) | Out-Null
+        $vt = New-Text $(if ($ga.Exe) { T $ga.Hint } else { (T 'O {0} não está instalado. Ele traz a configuração recomendada pela fabricante para cada jogo e aplica sozinho.') -f $ga.Name }) 12.5 '#9AA3B2'; $vt.Margin = '0,4,0,0'; $vs.Children.Add($vt) | Out-Null
         Put $vg $vs 0
-        if (-not $ga.Exe) { $gb = New-Button ((T 'Baixar o {0}') -f $ga.Name) 'Ghost' $ga.Get; $gb.add_Click({ Open-Url $this.Tag }); Put $vg $gb 1 }
+        # o NVIDIA App não aceita abrir direto na página de um jogo (o link dele é do GeForce NOW): um botão só, para abrir o app
+        if ($ga.Exe) { $gb = New-Button ((T 'Abrir o {0}') -f $ga.Name) 'Accent' $ga.Exe; $gb.add_Click({ Start-Unelevated $this.Tag; Write-Log ('Aberto: ' + $this.Tag) }); Put $vg $gb 1 }
+        else { $gb = New-Button ((T 'Baixar o {0}') -f $ga.Name) 'Ghost' $ga.Get; $gb.add_Click({ Open-Url $this.Tag }); Put $vg $gb 1 }
         $vb.Child = $vg; Add-Body $vb
     }
     if (-not $aiOn) {
@@ -3513,11 +3525,6 @@ function Build-Jogos {
         Put $gr $sp 1
         $bs = New-Object System.Windows.Controls.StackPanel; $bs.Orientation = 'Horizontal'; $bs.VerticalAlignment = 'Center'
         if ($g.Manual) { $rm = New-Button 'Remover' 'Ghost' $g.Path; $rm.Padding = '10,5'; $rm.FontSize = 12; $rm.Margin = '0,0,8,0'; $rm.ToolTip = (T 'Tira da lista (não apaga o jogo).'); $rm.add_Click({ Remove-ManualGame $this.Tag }); $bs.Children.Add($rm) | Out-Null }
-        if ($ga -and $ga.Exe) {
-            $ob = New-Button 'Otimizar' $(if ($aiOn) { 'Ghost' } else { 'Accent' }) $g.Name; $ob.Padding = '10,5'; $ob.FontSize = 12; $ob.Margin = '0,0,8,0'
-            $ob.ToolTip = ((T 'Abre o {0} para aplicar a configuração recomendada pela fabricante neste jogo.') -f $ga.Name)
-            $ob.add_Click({ $x = Get-GpuApp; Start-Unelevated $x.Exe; Show-Toast ((T $x.Hint) -f $this.Tag); Write-Log ('Otimizar no {0}: {1}' -f $x.Name, $this.Tag) }); $bs.Children.Add($ob) | Out-Null
-        }
         if ($aiOn) {
             if ($hasCode -and $ai -eq 'claude') { $bc = New-Button 'Responder aqui' 'Ghost' $g; $bc.Padding = '10,5'; $bc.FontSize = 12; $bc.Margin = '0,0,8,0'; $bc.ToolTip = (T 'Usa o Claude Code deste PC e mostra a resposta dentro do Janus. Exige plano pago do Claude.'); $bc.add_Click({ Ask-GameAi $this.Tag 'code' }); $bs.Children.Add($bc) | Out-Null }
             $ba = New-Button ((T 'Perguntar ao {0}') -f $AiList[$ai].Name) 'Accent' $g; $ba.Padding = '10,5'; $ba.FontSize = 12; $ba.add_Click({ Ask-GameAi $this.Tag 'web' }); $bs.Children.Add($ba) | Out-Null
@@ -3670,7 +3677,8 @@ $Changelog = [ordered]@{
         'Opção de derrubar e desativar o que interfere no Failover (não recomendado), com o botão Reativar para voltar tudo como estava.',
         'Perguntar à IA monta um arquivo com os dados do PC para anexar no chat, e a resposta vem com três configurações: equilibrada, qualidade e desempenho máximo.',
         'Opção na engrenagem: abrir o Janus sem a tela de permissão do Windows.',
-        'Jogos: botão Otimizar abre o NVIDIA App (ou AMD Software) para aplicar a configuração recomendada pela fabricante. A IA fica atrás do botão "Ativar configurações por IA".',
+        'Jogos: atalho para o NVIDIA App (ou AMD Software), que aplica a configuração recomendada pela fabricante. A IA fica atrás do botão "Ativar configurações por IA".',
+        'Aba Rede e menu da engrenagem bem mais rápidos.',
         'Cópias que não batem com uma versão publicada ganham o botão "Instalar versão original mais recente".',
         'Instalador em chinês e espanhol.',
         'Sugestão nova: usar a taxa de atualização (Hz) máxima da tela, com volta automática em 15 segundos se a imagem falhar.',
@@ -3805,7 +3813,12 @@ function Restore-Hz {
 # ---------- abrir sem a tela de administrador do Windows ----------
 # Tarefa agendada sem gatilho, com privilégio máximo: o atalho normal a chama e o Janus abre sem a pergunta do UAC.
 # Em troca, qualquer programa da conta também consegue abrir o Janus como administrador sem perguntar (por isso é opção).
-function Test-NoUac { return [bool](Get-ScheduledTask -TaskPath '\Janus\' -TaskName 'Abrir o Janus' -ErrorAction SilentlyContinue) }
+# tarefa \Janus\<nome> existe? (schtasks leva ~30 ms; Get-ScheduledTask levava ~0,5-0,8 s e travava a engrenagem)
+function Test-JanusTask([string]$name) {
+    $ErrorActionPreference = 'Continue'
+    try { $null = & schtasks.exe /query /tn ('\Janus\' + $name) 2>$null; return ($LASTEXITCODE -eq 0) } catch { return $false }
+}
+function Test-NoUac { return (Test-JanusTask 'Abrir o Janus') }
 function Set-NoUac([bool]$on) {
     try {
         if ($on) {
@@ -3823,7 +3836,7 @@ function Set-NoUac([bool]$on) {
         }
     } catch { Show-Toast ((T 'Não deu certo: {0}') -f $_.Exception.Message); Write-Log ('Abrir sem a tela de administrador falhou: ' + $_.Exception.Message) }
 }
-function Test-Autostart { return [bool](Get-ScheduledTask -TaskPath '\Janus\' -TaskName 'Iniciar com o Windows' -ErrorAction SilentlyContinue) }
+function Test-Autostart { return (Test-JanusTask 'Iniciar com o Windows') }
 function Set-Autostart([bool]$on) {
     try {
         if ($on) {
@@ -4307,7 +4320,7 @@ function Restore-FoOverride {
 }
 function Start-Failover {
     $cfg = Get-FoCfg
-    $ads = @(Get-NetAdapters | Where-Object { $_.V4 })
+    $ads = @(Get-NetAdapters -Fresh | Where-Object { $_.V4 })
     if ($ads.Count -lt 2) { Show-Toast 'O Failover precisa de duas conexões ativas (por exemplo, cabo e Wi-Fi).'; return $false }
     if (-not $cfg.Pref -or -not ($ads | Where-Object { $_.Name -eq $cfg.Pref })) { $cfg.Pref = @($ads | Where-Object { $_.Primary } | Select-Object -First 1).Name; if (-not $cfg.Pref) { $cfg.Pref = $ads[0].Name } }
     $script:FoSync.Adapters = @($ads | ForEach-Object { @{ Index = $_.Index; V4 = $_.V4; Name = $_.Name } })
@@ -4904,6 +4917,8 @@ if ($Teste) {
     Write-Output ("icones de jogos: {0} de {1} | sem: {2}" -f @($gr.Games | Where-Object { Get-GameIcon $_.Icon }).Count, @($gr.Games).Count, ((@($gr.Games | Where-Object { -not (Get-GameIcon $_.Icon) }) | ForEach-Object { $_.Name }) -join ', '))
     $sw2 = [Diagnostics.Stopwatch]::StartNew(); $fi = @(Get-NetInterference); Write-Output ("interferencias no failover ({0} ms): {1}" -f $sw2.ElapsedMilliseconds, $(if ($fi.Count) { ($fi | ForEach-Object { $_.Name }) -join ' | ' } else { 'nenhuma' }))
     Write-Output ("override faria: " + ((Get-FoOverridePlan $fi) -join ' | '))
+    foreach ($pg in 'Rede', 'Rede', 'Inicio', 'Jogos', 'Seguranca', 'Otimizacoes') { $sw3 = [Diagnostics.Stopwatch]::StartNew(); Show-Page $pg; Write-Output ("tempo da aba {0}: {1} ms" -f $pg, $sw3.ElapsedMilliseconds) }
+    $sw3 = [Diagnostics.Stopwatch]::StartNew(); [void](Test-Autostart); [void](Test-NoUac); Write-Output ("tempo das checagens da engrenagem: {0} ms" -f $sw3.ElapsedMilliseconds)
     $gb = Save-GameBrief @{ Name = 'Overwatch'; Source = 'Battle.net' }; Write-Output ("ficha do jogo: {0} ({1} caracteres)" -f (Split-Path -Leaf $gb), (Get-Content -LiteralPath $gb -Raw).Length)
     Write-Output ("abrir sem a tela do administrador: {0}" -f (Test-NoUac))
     Write-Output ("rede: icones={0} | ordem: {1}" -f (Get-NetGlyphs).Length, ((Get-NetAdapters | ForEach-Object { $_.Name }) -join ' > '))

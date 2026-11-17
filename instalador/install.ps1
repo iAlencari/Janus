@@ -33,8 +33,8 @@ if (-not $adm -and -not $Teste -and -not $Captura) {
 }
 
 # ---------- textos ----------
-$lang = $(if ($Ed -and $Ed.Idioma) { [string]$Ed.Idioma } elseif ([Globalization.CultureInfo]::CurrentUICulture.Name -like 'pt*') { 'pt' } else { 'en' })
-$S = @{
+$lang = $(if ($Ed -and $Ed.Idioma) { [string]$Ed.Idioma } else { switch -Wildcard ([Globalization.CultureInfo]::CurrentUICulture.Name) { 'pt*' { 'pt' } 'es*' { 'es' } 'zh*' { 'zh' } default { 'en' } } })
+$All = @{
   pt = @{ title = 'Instalar o {0}'; sub = 'Versão {0}'
           intro = 'O {0} ajusta o Windows para jogos e desempenho. Ele roda como administrador, cria ponto de restauração e backup antes de cada mudança, e tudo pode ser desfeito pelo próprio app.'
           folder = 'Pasta de instalação'; browse = 'Procurar...'; pick = 'Escolha onde instalar o {0}. Uma pasta "{1}" será criada dentro dela.'
@@ -55,7 +55,28 @@ $S = @{
           s1 = 'Closing {0} if it is open...'; s2 = 'Copying files...'; s3 = 'Protecting the folder...'; s4 = 'Creating shortcuts...'; s5 = 'Registering in Installed apps...'; s6 = 'Done.'
           done = 'All set!'; doneText = '{0} {1} was installed in:'; hint = 'To uninstall: Settings > Apps > Installed apps.'; finish = 'Finish'
           fail = 'Setup did not finish'; failText = 'Reason:'; close = 'Close'; bad = 'Choose a valid folder, for example C:\Program Files\{0}.' }
-}[$lang]
+  es = @{ title = 'Instalar {0}'; sub = 'Versión {0}'
+          intro = '{0} ajusta Windows para juegos y rendimiento. Se ejecuta como administrador, crea un punto de restauración y una copia de seguridad antes de cada cambio, y todo se puede deshacer desde la propia app.'
+          folder = 'Carpeta de instalación'; browse = 'Examinar...'; pick = 'Elige dónde instalar {0}. Se creará una carpeta "{1}" dentro de ella.'
+          outside = 'Fuera de "Archivos de programa": el instalador protege la carpeta para que solo los administradores puedan modificar {0}.'
+          upd = '{0} ya está instalado en esta carpeta: se actualizará. Tus preferencias y el registro de cambios se mantienen.'
+          desk = 'Crear acceso directo en el escritorio'; start = 'Crear acceso directo en el menú Inicio'; open = 'Abrir {0} al terminar'
+          cancel = 'Cancelar'; install = 'Instalar'; update = 'Actualizar'; working = 'Instalando {0}...'
+          s1 = 'Cerrando {0}, si está abierto...'; s2 = 'Copiando archivos...'; s3 = 'Protegiendo la carpeta...'; s4 = 'Creando accesos directos...'; s5 = 'Registrando en Aplicaciones instaladas...'; s6 = 'Listo.'
+          done = '¡Listo!'; doneText = '{0} {1} se instaló en:'; hint = 'Para desinstalar: Configuración > Aplicaciones > Aplicaciones instaladas.'; finish = 'Finalizar'
+          fail = 'La instalación no terminó'; failText = 'Motivo:'; close = 'Cerrar'; bad = 'Elige una carpeta válida, por ejemplo C:\Program Files\{0}.' }
+  zh = @{ title = '安装 {0}'; sub = '版本 {0}'
+          intro = '{0} 为游戏和性能优化 Windows。它以管理员身份运行，每次更改前都会创建还原点和备份，所有更改都可以在应用内撤销。'
+          folder = '安装文件夹'; browse = '浏览...'; pick = '选择 {0} 的安装位置。会在其中创建“{1}”文件夹。'
+          outside = '不在“Program Files”中：安装程序会保护该文件夹，只有管理员才能修改 {0}。'
+          upd = '此文件夹中已安装 {0}：将进行更新。你的设置和更改记录会保留。'
+          desk = '创建桌面快捷方式'; start = '创建开始菜单快捷方式'; open = '完成后打开 {0}'
+          cancel = '取消'; install = '安装'; update = '更新'; working = '正在安装 {0}...'
+          s1 = '正在关闭 {0}（如已打开）...'; s2 = '正在复制文件...'; s3 = '正在保护文件夹...'; s4 = '正在创建快捷方式...'; s5 = '正在注册到“已安装的应用”...'; s6 = '已完成。'
+          done = '完成！'; doneText = '{0} {1} 已安装到：'; hint = '卸载：设置 > 应用 > 已安装的应用。'; finish = '完成'
+          fail = '安装未完成'; failText = '原因：'; close = '关闭'; bad = '请选择有效的文件夹，例如 C:\Program Files\{0}。' }
+}
+$S = $All[$lang]; if (-not $S) { $S = $All['en'] }   # idioma sem textos próprios: inglês
 
 # ---------- instalação ----------
 $Pf = $(if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles })

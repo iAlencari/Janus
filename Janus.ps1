@@ -249,7 +249,7 @@ function Load-Config {
     # padrões; qualquer valor salvo no config.json por cima (opções novas não precisam de código extra aqui)
     $c = @{ WarningSeen = $false; Dismissed = @(); LightMode = $false; Lang = ''; CrashCount = 0; AutoUpdate = $true; Anonimizar = $true
             LangChosen = $false; Theme = 'dark'; NavMode = 'simples'; OptSort = 'prio'; OptView = 'grade'; MonLevel = 'normal'
-            SpeedWarnOff = $false; DnsAuto = $true; SecOff = @(); DndUntil = ''; AiChoice = ''; AiAsked = $false; AiGoal = 'fps'; LogView = 'simples'; NotifyItems = @(); NotifyKinds = @('corner'); ManualGames = @(); FoOverride = @()
+            SpeedWarnOff = $false; DnsAuto = $true; SecOff = @(); DndUntil = ''; AiChoice = ''; AiAsked = $false; AiGoal = 'fps'; LogView = 'simples'; NotifyItems = @(); NotifyKinds = @('corner'); ManualGames = @(); FoOverride = @(); AiGames = $false
             NotifyRepeat = 'uma'; NotifyRearm = 30; NotifyEvery = 10; Tray = $false; CloseAsked = $false; LastVersion = '' }
     if ($Edition.Idioma) { $c.Lang = [string]$Edition.Idioma; $c.LangChosen = $true }   # idioma padrão da edição
     if (Test-Path -LiteralPath $ConfigFile) {
@@ -743,7 +743,7 @@ $script:Pages = [ordered]@{
   'Rede'        = @{ Glyph=[char]0xE701; Title='Rede e energia';            Sub='Conexões, DNS, teste de velocidade, economia de energia e inicialização.'; SimpleTitle='Internet e DNS'; SimpleSub='DNS seguro e teste de velocidade de cada conexão.' }
   'Privacidade' = @{ Glyph=[char]0xE72E; Title='Privacidade';               Sub='O que o Windows envia e mostra para você.'; Mode='categorias' }
   'Interface'   = @{ Glyph=[char]0xE771; Title='Interface';                 Sub='Aparência e atalhos do dia a dia.'; Mode='categorias' }
-  'Jogos'       = @{ Glyph=[char]0xE7FC; Title='Jogos';                     Sub='Os jogos instalados neste PC e a configuração ideal de cada um, pesquisada com a IA que você escolher.' }
+  'Jogos'       = @{ Glyph=[char]0xE7FC; Title='Jogos';                     Sub='Os jogos instalados neste PC, com a configuração recomendada pela fabricante da placa de vídeo ou por uma IA.' }
   'Seguranca'   = @{ Glyph=[char]0xEA18; Title='Segurança';                 Sub='O padrão do Windows é o certo. Recomendamos deixar tudo ligado.' }
   'Manutencao'  = @{ Glyph=[char]0xE90F; Title='Manutenção';                Sub='Ações rápidas: ponto de restauração, verificação, limpeza.' }
   'Registro'    = @{ Glyph=[char]0xE8A5; Title='Registro de mudanças';      Sub='Tudo o que o Janus já alterou, com data e hora.' }
@@ -2193,11 +2193,22 @@ function Set-AuthFromCheck($res) {
     if ($ui -and $W.IsVisible -and $script:CurrentPage -in 'Inicio', 'Manutencao', 'Sobre' -and -not $script:Busy) { Show-Page $script:CurrentPage $ui.Scroll.VerticalOffset }
     if ($script:ManualCheck) { $script:ManualCheck = $false; if ($ui -and $W.IsVisible) { Show-Toast ('Verificação concluída: ' + $a.Title) } }
 }
-function Install-Update {
+# -Original: instala a versão publicada mais recente por cima desta, mesmo sem ser mais nova
+# (para cópias modificadas, de desenvolvimento ou com arquivos diferentes do original)
+function Install-Update([switch]$Original) {
     $a = $script:Auth
-    if (-not $a.LatestMan -or (Compare-AppVersion $a.Latest $AppVersion) -le 0) { return }
+    if (-not $a.LatestMan) { return }
+    if (-not $Original -and (Compare-AppVersion $a.Latest $AppVersion) -le 0) { return }
+    if ($Original -and (Test-Path -LiteralPath (Join-Path $Pasta '.git'))) {
+        Show-Choice 'Instalar versão original' 'Esta é a pasta do código-fonte' 'Esta cópia está numa pasta com o histórico do Git (de quem desenvolve o Janus). Trocar os arquivos aqui apagaria o trabalho em andamento. Use o instalador ou o Git.' @(@('ok', 'Ok', 'Accent')) 'warn' | Out-Null
+        return
+    }
     $notes = $(if ($a.Notes) { $n = [string]$a.Notes; if ($n.Length -gt 700) { $n.Substring(0, 700) + '...' } else { $n } } else { '' })
-    $r = Show-Choice 'Atualizar o Janus' ('Atualizar para {0}?' -f (Format-Version $a.Latest)) ((T 'O Janus baixa os arquivos do GitHub oficial, confere cada um pela assinatura e só então troca. A versão atual fica guardada para voltar, se precisar.') + $(if ($notes) { "`n`n" + $notes } else { '' })) @(@('yes', 'Atualizar agora', 'Accent'), @('no', 'Depois', 'Ghost')) 'info'
+    if ($Original) {
+        $r = Show-Choice 'Instalar versão original' ((T 'Instalar a versão original {0}?') -f (Format-Version $a.Latest)) (T 'O Janus baixa os arquivos publicados no GitHub oficial, confere cada um pela assinatura e troca os desta cópia por eles. Os arquivos atuais ficam guardados. Suas preferências e o registro de mudanças continuam.') @(@('yes', 'Instalar a original', 'Accent'), @('no', 'Cancelar', 'Ghost')) 'warn'
+    } else {
+        $r = Show-Choice 'Atualizar o Janus' ('Atualizar para {0}?' -f (Format-Version $a.Latest)) ((T 'O Janus baixa os arquivos do GitHub oficial, confere cada um pela assinatura e só então troca. A versão atual fica guardada para voltar, se precisar.') + $(if ($notes) { "`n`n" + $notes } else { '' })) @(@('yes', 'Atualizar agora', 'Accent'), @('no', 'Depois', 'Ghost')) 'info'
+    }
     if ($r -ne 'yes') { return }
     $W.Cursor = [System.Windows.Input.Cursors]::Wait
     $tmp = Join-Path $env:TEMP ('janus-update-' + [guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Path $tmp | Out-Null
@@ -2238,7 +2249,10 @@ function New-AuthCard {
     if ($a.CheckedAt) { $ck = New-Text ('Verificado às {0}' -f $a.CheckedAt.ToString('HH:mm')) 11 '#5F6878'; $ck.Margin = '0,4,0,0'; $sp.Children.Add($ck) | Out-Null }
     Put $g $sp 1
     $bs = New-Object System.Windows.Controls.StackPanel; $bs.Orientation = 'Horizontal'; $bs.VerticalAlignment = 'Center'
-    if ($a.Latest -and (Compare-AppVersion $a.Latest $AppVersion) -gt 0 -and $a.Level -ne 'crit') { $u = New-Button 'Atualizar agora' 'Accent'; $u.Margin = '8,0,0,0'; $u.add_Click({ Install-Update }); $bs.Children.Add($u) | Out-Null }
+    $canUpd = ($a.Latest -and (Compare-AppVersion $a.Latest $AppVersion) -gt 0 -and $a.Level -ne 'crit')
+    if ($canUpd) { $u = New-Button 'Atualizar agora' 'Accent'; $u.Margin = '8,0,0,0'; $u.add_Click({ Install-Update }); $bs.Children.Add($u) | Out-Null }
+    # cópia que não bate com nenhuma versão publicada (ou com arquivos alterados): oferece a original por cima
+    elseif ($a.LatestMan -and $a.Level -in 'warn', 'crit') { $u = New-Button 'Instalar versão original mais recente' 'Accent'; $u.Margin = '8,0,0,0'; $u.ToolTip = (T 'Baixa a versão publicada no GitHub oficial, confere a assinatura e instala por cima desta.'); $u.add_Click({ Install-Update -Original }); $bs.Children.Add($u) | Out-Null }
     $v = New-Button 'Verificar agora' 'Ghost'; $v.Margin = '8,0,0,0'; $v.add_Click({ $script:ManualCheck = $true; Start-UpdateCheck; Show-Toast 'Verificando no GitHub...' }); $bs.Children.Add($v) | Out-Null
     $o = New-Button 'GitHub' 'Ghost' $a.Url; $o.Margin = '8,0,0,0'; $o.add_Click({ Open-Url $this.Tag }); $bs.Children.Add($o) | Out-Null
     Put $g $bs 2
@@ -3352,18 +3366,41 @@ function Remove-ManualGame([string]$p) {
     if ($null -ne $script:Games) { $script:Games = @($script:Games | Where-Object { -not ($_.Manual -and $_.Path -eq $p) }) }
     Write-Log ('Jogo tirado da lista: ' + $p); Show-Page 'Jogos' $ui.Scroll.VerticalOffset
 }
+# programa da placa de vídeo que tem as configurações recomendadas por jogo (NVIDIA App / AMD Software)
+function Get-GpuApp {
+    $gpu = [string](Get-PcInfo).Gpu
+    $nv = Join-Path $env:ProgramFiles 'NVIDIA Corporation\NVIDIA App\CEF\NVIDIA App.exe'
+    $amd = Join-Path $env:ProgramFiles 'AMD\CNext\CNext\RadeonSoftware.exe'
+    if ($gpu -match 'NVIDIA') { return @{ Name = 'NVIDIA App'; Exe = $(if (Test-Path -LiteralPath $nv) { $nv } else { '' }); Get = 'https://www.nvidia.com/software/nvidia-app/'; Hint = 'No NVIDIA App, abra "Jogos e apps", escolha {0} e clique em Otimizar.' } }
+    if ($gpu -match 'Radeon|AMD') { return @{ Name = 'AMD Software'; Exe = $(if (Test-Path -LiteralPath $amd) { $amd } else { '' }); Get = 'https://www.amd.com/support/download/drivers.html'; Hint = 'No AMD Software, abra "Jogos", escolha {0} e ajuste o perfil gráfico.' } }
+    return $null
+}
 function Build-Jogos {
     $ai = $script:Config.AiChoice
-    if (-not $ai -or -not $AiList.Contains($ai)) {
-        # sem IA integrada: só o botão para ativar
-        $box = New-Card; $box.Padding = '20,16,20,16'
-        $g = New-Object System.Windows.Controls.Grid; Grid-Cols $g @('*', 'Auto')
-        $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = '0,0,16,0'
-        $sp.Children.Add((New-Text 'Otimização por IA' 16 '#E6E9EF' 'SemiBold')) | Out-Null
-        $d1 = New-Text 'Com uma IA, o Janus pesquisa a configuração ideal de cada jogo para o seu hardware. Você escolhe o modelo e o objetivo.' 12.5 '#9AA3B2'; $d1.Margin = '0,4,0,0'; $sp.Children.Add($d1) | Out-Null
-        Put $g $sp 0
-        $b = New-Button 'Ativar otimização por IA' 'Accent'; $b.add_Click({ if (Show-AiSetup) { Show-Page 'Jogos' } }); Put $g $b 1
-        $box.Child = $g; Add-Body $box
+    $aiOn = ([bool]$script:Config.AiGames -and $ai -and $AiList.Contains($ai))
+    # configurações recomendadas pela fabricante da placa de vídeo (caminho oficial, aplicado pelo próprio programa dela)
+    $ga = Get-GpuApp
+    if ($ga) {
+        $vb = New-Card; $vb.Padding = '18,14,18,14'
+        $vg = New-Object System.Windows.Controls.Grid; Grid-Cols $vg @('*', 'Auto')
+        $vs = New-Object System.Windows.Controls.StackPanel; $vs.Margin = '0,0,16,0'
+        $vs.Children.Add((New-Text ((T 'Configurações recomendadas pelo {0}') -f $ga.Name) 15 '#E6E9EF' 'SemiBold')) | Out-Null
+        $vt = New-Text $(if ($ga.Exe) { (T 'O {0} tem a configuração recomendada pela fabricante para cada jogo que ele reconhece, e aplica sozinho. Use o botão Otimizar de cada jogo abaixo.') -f $ga.Name } else { (T 'O {0} não está instalado. Ele traz a configuração recomendada pela fabricante para cada jogo e aplica sozinho.') -f $ga.Name }) 12.5 '#9AA3B2'; $vt.Margin = '0,4,0,0'; $vs.Children.Add($vt) | Out-Null
+        Put $vg $vs 0
+        if (-not $ga.Exe) { $gb = New-Button ((T 'Baixar o {0}') -f $ga.Name) 'Ghost' $ga.Get; $gb.add_Click({ Open-Url $this.Tag }); Put $vg $gb 1 }
+        $vb.Child = $vg; Add-Body $vb
+    }
+    if (-not $aiOn) {
+        # IA fica escondida até a pessoa ativar
+        $ar = New-Object System.Windows.Controls.Grid; Grid-Cols $ar @('*', 'Auto'); $ar.Margin = '0,0,12,8'
+        $at = New-Text 'Também dá para pedir a uma IA três configurações para cada jogo (equilibrada, qualidade e desempenho máximo).' 12 '#7F8899'; $at.VerticalAlignment = 'Center'; $at.Margin = '0,0,12,0'; Put $ar $at 0
+        $ab = New-Button 'Ativar configurações por IA' 'Ghost'; $ab.Padding = '12,5'; $ab.FontSize = 12.5
+        $ab.add_Click({
+            if (-not $script:Config.AiChoice -or -not $AiList.Contains([string]$script:Config.AiChoice)) { if (-not (Show-AiSetup)) { return } }
+            if (-not $script:Config.AiChoice) { return }
+            $script:Config.AiGames = $true; Save-Config; Write-Log 'Configurações por IA na aba Jogos: ativadas.'; Show-Page 'Jogos' $ui.Scroll.VerticalOffset
+        })
+        Put $ar $ab 1; Add-Body $ar
     } else {
         $box = New-Card; $box.Padding = '18,14,18,14'
         $bx = New-Object System.Windows.Controls.StackPanel
@@ -3371,6 +3408,8 @@ function Build-Jogos {
         $l1 = New-Text 'Modelo:' 12.5 '#8B94A5' 'SemiBold'; $l1.VerticalAlignment = 'Center'; $l1.Margin = '0,0,8,0'; $r1.Children.Add($l1) | Out-Null
         $cur = New-Text ($AiList[$ai].Name + '  (' + (T $AiList[$ai].Who) + ')') 13 '#E6E9EF' 'SemiBold'; $cur.VerticalAlignment = 'Center'; $cur.Margin = '0,0,12,0'; $r1.Children.Add($cur) | Out-Null
         $sb = New-Button 'Selecionar modelo' 'Ghost'; $sb.Padding = '10,4'; $sb.FontSize = 12; $sb.add_Click({ if (Show-AiSetup) { Show-Page 'Jogos' $ui.Scroll.VerticalOffset } }); $r1.Children.Add($sb) | Out-Null
+        $off = New-Button 'Desativar' 'Ghost'; $off.Padding = '10,4'; $off.FontSize = 12; $off.Margin = '6,0,0,0'; $off.ToolTip = (T 'Esconde os botões de IA da aba Jogos.')
+        $off.add_Click({ $script:Config.AiGames = $false; Save-Config; Write-Log 'Configurações por IA na aba Jogos: desativadas.'; Show-Page 'Jogos' $ui.Scroll.VerticalOffset }); $r1.Children.Add($off) | Out-Null
         $bx.Children.Add($r1) | Out-Null
         $r2 = New-Text 'A resposta vem com três configurações lado a lado: equilibrada, qualidade e desempenho máximo. O Janus monta um arquivo com os dados do PC para você anexar no chat.' 12.5 '#AEB6C4'; $r2.Margin = '0,10,0,0'
         $bx.Children.Add($r2) | Out-Null
@@ -3413,7 +3452,12 @@ function Build-Jogos {
         $bs = New-Object System.Windows.Controls.StackPanel; $bs.Orientation = 'Horizontal'; $bs.VerticalAlignment = 'Center'
         if ($g.Manual) { $rm = New-Button 'Remover' 'Ghost' $g.Path; $rm.Padding = '10,5'; $rm.FontSize = 12; $rm.Margin = '0,0,8,0'; $rm.ToolTip = (T 'Tira da lista (não apaga o jogo).'); $rm.add_Click({ Remove-ManualGame $this.Tag }); $bs.Children.Add($rm) | Out-Null }
         $wk = New-LinkButton 'PCGamingWiki' ('https://www.pcgamingwiki.com/w/index.php?search=' + [uri]::EscapeDataString($g.Name)); $wk.Margin = '0,0,8,0'; $bs.Children.Add($wk) | Out-Null
-        if ($ai -and $AiList.Contains($ai)) {
+        if ($ga -and $ga.Exe) {
+            $ob = New-Button 'Otimizar' $(if ($aiOn) { 'Ghost' } else { 'Accent' }) $g.Name; $ob.Padding = '10,5'; $ob.FontSize = 12; $ob.Margin = '0,0,8,0'
+            $ob.ToolTip = ((T 'Abre o {0} para aplicar a configuração recomendada pela fabricante neste jogo.') -f $ga.Name)
+            $ob.add_Click({ $x = Get-GpuApp; Start-Unelevated $x.Exe; Show-Toast ((T $x.Hint) -f $this.Tag); Write-Log ('Otimizar no {0}: {1}' -f $x.Name, $this.Tag) }); $bs.Children.Add($ob) | Out-Null
+        }
+        if ($aiOn) {
             if ($hasCode -and $ai -eq 'claude') { $bc = New-Button 'Responder aqui' 'Ghost' $g; $bc.Padding = '10,5'; $bc.FontSize = 12; $bc.Margin = '0,0,8,0'; $bc.ToolTip = (T 'Usa o Claude Code deste PC e mostra a resposta dentro do Janus. Exige plano pago do Claude.'); $bc.add_Click({ Ask-GameAi $this.Tag 'code' }); $bs.Children.Add($bc) | Out-Null }
             $ba = New-Button ((T 'Perguntar ao {0}') -f $AiList[$ai].Name) 'Accent' $g; $ba.Padding = '10,5'; $ba.FontSize = 12; $ba.add_Click({ Ask-GameAi $this.Tag 'web' }); $bs.Children.Add($ba) | Out-Null
         }
@@ -3565,6 +3609,9 @@ $Changelog = [ordered]@{
         'Opção de derrubar e desativar o que interfere no Failover (não recomendado), com o botão Reativar para voltar tudo como estava.',
         'Perguntar à IA monta um arquivo com os dados do PC para anexar no chat, e a resposta vem com três configurações: equilibrada, qualidade e desempenho máximo.',
         'Opção na engrenagem: abrir o Janus sem a tela de permissão do Windows.',
+        'Jogos: botão Otimizar abre o NVIDIA App (ou AMD Software) para aplicar a configuração recomendada pela fabricante. A IA fica atrás do botão "Ativar configurações por IA".',
+        'Cópias que não batem com uma versão publicada ganham o botão "Instalar versão original mais recente".',
+        'Instalador em chinês e espanhol.',
         'Procurar manualmente: adicione à aba Jogos um jogo que a busca não achou.',
         'Esta janela de novidades.',
         'Saíram o botão Testes e o aviso de piscar o ícone.'
